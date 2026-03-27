@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mirror Room</title>
+  <style>
+    *{margin:0;padding:0}
+    body{background:#000;overflow:hidden;font-family:system-ui,sans-serif}
+    canvas{display:block;width:100vw;height:100vh}
+
+    #overlay{
+      position:fixed;inset:0;z-index:10;pointer-events:none;
+      display:flex;flex-direction:column;justify-content:space-between;
+    }
+
+    #hud{
+      display:flex;justify-content:space-between;padding:16px 24px;
+    }
+    .hud-box{
+      background:rgba(0,0,0,.5);backdrop-filter:blur(8px);
+      padding:8px 16px;border-radius:10px;
+      font-size:13px;color:rgba(255,255,255,.7);
+      border:1px solid rgba(255,255,255,.06);
+    }
+
+    #crosshair{
+      position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+      width:20px;height:20px;z-index:11;pointer-events:none;
+    }
+    #crosshair::before,#crosshair::after{
+      content:'';position:absolute;background:rgba(255,255,255,.5);border-radius:1px;
+    }
+    #crosshair::before{width:2px;height:100%;left:50%;transform:translateX(-50%)}
+    #crosshair::after{height:2px;width:100%;top:50%;transform:translateY(-50%)}
+
+    #msg{
+      text-align:center;padding-bottom:20px;
+      font-size:12px;color:rgba(255,255,255,.3);
+    }
+
+    #start-screen{
+      position:fixed;inset:0;z-index:20;
+      background:rgba(0,0,0,.9);backdrop-filter:blur(20px);
+      display:flex;flex-direction:column;align-items:center;justify-content:center;
+      gap:20px;cursor:pointer;transition:opacity .5s;
+    }
+    #start-screen.hidden{opacity:0;pointer-events:none}
+    #start-screen h1{
+      font-size:42px;font-weight:200;color:#fff;letter-spacing:8px;
+    }
+    #start-screen p{font-size:14px;color:rgba(255,255,255,.4)}
+    #start-screen .key{
+      display:inline-block;padding:2px 8px;border:1px solid rgba(255,255,255,.2);
+      border-radius:4px;font-size:12px;color:rgba(255,255,255,.5);margin:0 2px;
+    }
+
+    #collect-flash{
+      position:fixed;inset:0;z-index:15;pointer-events:none;
+      background:radial-gradient(circle,rgba(100,200,255,.15),transparent 70%);
+      opacity:0;transition:opacity .15s;
+    }
+    #collect-flash.show{opacity:1}
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <div id="crosshair"></div>
+  <div id="collect-flash"></div>
+
+  <div id="overlay">
+    <div id="hud">
+      <div class="hud-box" id="score-box">✦ 0 / 5</div>
+      <div class="hud-box" id="timer-box">⏱ 0:00</div>
+    </div>
+    <div id="msg">WASD move · Mouse look · Click to collect orbs</div>
+  </div>
+
+  <div id="start-screen">
+    <h1>MIRROR ROOM</h1>
+    <p>Find the glowing orbs hidden in the reflections</p>
+    <p>
+      <span class="key">W</span><span class="key">A</span><span class="key">S</span><span class="key">D</span> move ·
+      <span class="key">Mouse</span> look ·
+      <span class="key">Click</span> collect
+    </p>
+    <p style="margin-top:12px;color:rgba(255,255,255,.25)">click anywhere to start</p>
+  </div>
+
+  <script src="main.js"></script>
+</body>
+</html>
