@@ -1,360 +1,405 @@
-(function () {
-  "use strict";
+import * as THREE from 'three';
+import { Reflector } from 'three/addons/objects/Reflector.js';
+import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 
-  // ═══ SCENE SETUP ═══
-  var scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x050508);
-  scene.fog = new THREE.FogExp2(0x050508, 0.012);
+RectAreaLightUniformsLib.init();
 
-  var camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.1, 200);
-  camera.position.set(0, 1.6, 0);
+// ═══ RENDERER — max quality, no pixelation ═══
+const renderer = new THREE.WebGLRenderer({
+  antialias: true,
+  powerPreference: 'high-performance'
+});
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(devicePixelRatio); // full native resolution — no pixelation
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.1;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+const canvas = renderer.domElement;
 
-  var renderer = new THREE.WebGLRenderer({ antialias: true });
-  renderer.setSize(innerWidth, innerHeight);
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.2;
-  document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x020204);
+scene.fog = new THREE.FogExp2(0x020204, 0.008);
 
-  // ═══ MIRROR ROOM ═══
-  // We create a large room with reflective walls using CubeCamera for real reflections
-  var roomW = 14, roomH = 6, roomD = 20;
+const camera = new THREE.PerspectiveCamera(72, innerWidth / innerHeight, 0.1, 500);
+camera.position.set(0, 1.65, 0);
 
-  // CubeCamera for reflections
-  var cubeRenderTarget = new THREE.WebGLCubeRenderTarget(256, {
-    format: THREE.RGBFormat,
-    generateMipmaps: true,
-    minFilter: THREE.LinearMipmapLinearFilter
+// ═══ POST-PROCESSING — bloom for orb glow ═══
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.6, 0.4, 0.85);
+composer.addPass(bloom);
+
+// ═══ ROOM GEOMETRY ═══
+const CELL = 12;   // room cell size
+const CEIL_H = 5.5;
+const GRID = 11;   // rooms in each direction (11x11 = 121 rooms visible)
+const HALF = Math.floor(GRID / 2);
+
+// Mirror wall material — high metalness, low roughness
+function mirrorMat() {
+  return new THREE.MeshStandardMaterial({
+    color: 0x888899,
+    metalness: 0.98,
+    roughness: 0.02,
+    side: THREE.DoubleSide
   });
-  var cubeCamera = new THREE.CubeCamera(0.1, 100, cubeRenderTarget);
-  scene.add(cubeCamera);
+}
 
-  // Mirror material
-  var mirrorMat = new THREE.MeshStandardMaterial({
-    color: 0xaaaacc,
-    metalness: 0.97,
-    roughness: 0.03,
-    envMap: cubeRenderTarget.texture,
-    envMapIntensity: 1.5
-  });
+// Ceiling material
+const ceilMat = new THREE.MeshStandardMaterial({
+  color: 0x111116,
+  metalness: 0.6,
+  roughness: 0.25
+});
 
-  // Floor — dark polished
-  var floorMat = new THREE.MeshStandardMaterial({
-    color: 0x111118,
-    metalness: 0.8,
-    roughness: 0.1,
-    envMap: cubeRenderTarget.texture,
-    envMapIntensity: 1.0
-  });
+// Light panel material (emissive)
+const panelMat = new THREE.MeshStandardMaterial({
+  color: 0xfff8ee,
+  emissive: 0xfff0dd,
+  emissiveIntensity: 2.0
+});
 
-  // Ceiling
-  var ceilMat = new THREE.MeshStandardMaterial({
-    color: 0x181820,
-    metalness: 0.5,
-    roughness: 0.3,
-    envMap: cubeRenderTarget.texture,
-    envMapIntensity: 0.5
-  });
+// Wall segment with panel grid lines
+function createWall(w, h) {
+  return new THREE.PlaneGeometry(w, h);
+}
 
-  // Build room walls
-  function makeWall(w, h, mat, pos, rotY, rotX) {
-    var geo = new THREE.PlaneGeometry(w, h);
-    var mesh = new THREE.Mesh(geo, mat);
-    mesh.position.set(pos[0], pos[1], pos[2]);
-    if (rotY) mesh.rotation.y = rotY;
-    if (rotX) mesh.rotation.x = rotX;
-    scene.add(mesh);
-    return mesh;
-  }
+// ═══ BUILD ROOM GRID ═══
+// We build a grid of rooms around the player and reposition them as the player moves
+const wallGeo = createWall(CELL, CEIL_H);
+const floorGeo = new THREE.PlaneGeometry(CELL, CELL);
+const ceilGeo = new THREE.PlaneGeometry(CELL, CELL);
+const panelGeo = new THREE.PlaneGeometry(1.2, 1.2);
 
-  // Floor & ceiling
-  makeWall(roomW, roomD, floorMat, [0, 0, 0], 0, -Math.PI / 2);
-  makeWall(roomW, roomD, ceilMat, [0, roomH, 0], 0, Math.PI / 2);
-  // Left & right walls
-  makeWall(roomD, roomH, mirrorMat, [-roomW / 2, roomH / 2, 0], Math.PI / 2, 0);
-  makeWall(roomD, roomH, mirrorMat, [roomW / 2, roomH / 2, 0], -Math.PI / 2, 0);
-  // Front & back walls
-  makeWall(roomW, roomH, mirrorMat, [0, roomH / 2, -roomD / 2], 0, 0);
-  makeWall(roomW, roomH, mirrorMat, [0, roomH / 2, roomD / 2], Math.PI, 0);
+const rooms = []; // array of {group, cx, cz}
 
-  // ═══ LIGHTING ═══
-  // Ceiling light strips
-  var light1 = new THREE.RectAreaLight(0xffeedd, 8, 1.5, roomD * 0.7);
-  light1.position.set(3, roomH - 0.05, 0);
-  light1.rotation.x = Math.PI;
-  scene.add(light1);
+for (let gx = -HALF; gx <= HALF; gx++) {
+  for (let gz = -HALF; gz <= HALF; gz++) {
+    const g = new THREE.Group();
 
-  var light2 = new THREE.RectAreaLight(0xffeedd, 8, 1.5, roomD * 0.7);
-  light2.position.set(-3, roomH - 0.05, 0);
-  light2.rotation.x = Math.PI;
-  scene.add(light2);
+    // Floor — reflective mirror
+    const floor = new Reflector(floorGeo.clone(), {
+      clipBias: 0.003,
+      textureWidth: 512,
+      textureHeight: 512,
+      color: 0x111118
+    });
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.y = 0;
+    g.add(floor);
 
-  // Light panel meshes (visible glowing rectangles on ceiling)
-  var panelGeo = new THREE.PlaneGeometry(1.5, roomD * 0.7);
-  var panelMat = new THREE.MeshBasicMaterial({ color: 0xfff5e6, transparent: true, opacity: 0.9 });
-  var panel1 = new THREE.Mesh(panelGeo, panelMat);
-  panel1.position.set(3, roomH - 0.02, 0);
-  panel1.rotation.x = Math.PI / 2;
-  scene.add(panel1);
-  var panel2 = new THREE.Mesh(panelGeo, panelMat);
-  panel2.position.set(-3, roomH - 0.02, 0);
-  panel2.rotation.x = Math.PI / 2;
-  scene.add(panel2);
+    // Ceiling
+    const ceil = new THREE.Mesh(ceilGeo.clone(), ceilMat);
+    ceil.rotation.x = Math.PI / 2;
+    ceil.position.y = CEIL_H;
+    g.add(ceil);
 
-  // Ambient fill
-  scene.add(new THREE.AmbientLight(0x222233, 0.3));
-
-  // Point lights for extra depth
-  var pl1 = new THREE.PointLight(0x6688ff, 2, 15);
-  pl1.position.set(0, 4, 5);
-  scene.add(pl1);
-  var pl2 = new THREE.PointLight(0xff6644, 1.5, 15);
-  pl2.position.set(0, 4, -5);
-  scene.add(pl2);
-
-  // ═══ ORBS ═══
-  var orbGroup = new THREE.Group();
-  scene.add(orbGroup);
-
-  var NUM_DECOYS = 8;
-  var orbData = [];
-  var goldIndex = -1;
-
-  function randomInRoom() {
-    return {
-      x: (Math.random() - 0.5) * (roomW - 3),
-      y: 0.8 + Math.random() * (roomH - 2.5),
-      z: (Math.random() - 0.5) * (roomD - 3)
-    };
-  }
-
-  function spawnOrbs() {
-    // Clear old
-    while (orbGroup.children.length) orbGroup.remove(orbGroup.children[0]);
-    orbData = [];
-
-    goldIndex = Math.floor(Math.random() * (NUM_DECOYS + 1));
-
-    for (var i = 0; i <= NUM_DECOYS; i++) {
-      var isGold = i === goldIndex;
-      var geo = new THREE.SphereGeometry(0.2, 32, 32);
-      var mat;
-
-      if (isGold) {
-        mat = new THREE.MeshStandardMaterial({
-          color: 0xffd700,
-          emissive: 0xffa000,
-          emissiveIntensity: 0.8,
-          metalness: 0.9,
-          roughness: 0.1,
-          envMap: cubeRenderTarget.texture,
-          envMapIntensity: 1.0
-        });
-      } else {
-        // Decoy — various colors, slightly transparent
-        var hue = Math.random();
-        var col = new THREE.Color().setHSL(hue, 0.7, 0.5);
-        mat = new THREE.MeshStandardMaterial({
-          color: col,
-          emissive: col,
-          emissiveIntensity: 0.4,
-          metalness: 0.5,
-          roughness: 0.2,
-          transparent: true,
-          opacity: 0.85,
-          envMap: cubeRenderTarget.texture,
-          envMapIntensity: 0.5
-        });
+    // 4 light panels on ceiling
+    for (let lx = -1; lx <= 1; lx += 2) {
+      for (let lz = -1; lz <= 1; lz += 2) {
+        const p = new THREE.Mesh(panelGeo.clone(), panelMat);
+        p.rotation.x = Math.PI / 2;
+        p.position.set(lx * 2.5, CEIL_H - 0.01, lz * 2.5);
+        g.add(p);
       }
+    }
 
-      var mesh = new THREE.Mesh(geo, mat);
-      var pos = randomInRoom();
-      mesh.position.set(pos.x, pos.y, pos.z);
+    // 4 walls
+    // +X wall
+    const w1 = new THREE.Mesh(wallGeo.clone(), mirrorMat());
+    w1.position.set(CELL / 2, CEIL_H / 2, 0);
+    w1.rotation.y = -Math.PI / 2;
+    g.add(w1);
+    // -X wall
+    const w2 = new THREE.Mesh(wallGeo.clone(), mirrorMat());
+    w2.position.set(-CELL / 2, CEIL_H / 2, 0);
+    w2.rotation.y = Math.PI / 2;
+    g.add(w2);
+    // +Z wall
+    const w3 = new THREE.Mesh(wallGeo.clone(), mirrorMat());
+    w3.position.set(0, CEIL_H / 2, CELL / 2);
+    w3.rotation.y = Math.PI;
+    g.add(w3);
+    // -Z wall
+    const w4 = new THREE.Mesh(wallGeo.clone(), mirrorMat());
+    w4.position.set(0, CEIL_H / 2, -CELL / 2);
+    g.add(w4);
+
+    g.position.set(gx * CELL, 0, gz * CELL);
+    scene.add(g);
+    rooms.push({ group: g, gx, gz });
+  }
+}
+
+// ═══ LIGHTING ═══
+// Rect area lights per visible area
+const aLight = new THREE.AmbientLight(0x222233, 0.4);
+scene.add(aLight);
+
+// Central area lights
+for (let lx = -2; lx <= 2; lx++) {
+  for (let lz = -2; lz <= 2; lz++) {
+    const rl = new THREE.RectAreaLight(0xffeedd, 6, 2.0, 2.0);
+    rl.position.set(lx * CELL, CEIL_H - 0.05, lz * CELL);
+    rl.rotation.x = Math.PI;
+    scene.add(rl);
+  }
+}
+
+// A couple of point lights that follow the player for local illumination
+const pLight1 = new THREE.PointLight(0xffeedd, 3, 20, 1.5);
+pLight1.castShadow = true;
+pLight1.shadow.mapSize.set(1024, 1024);
+scene.add(pLight1);
+
+const pLight2 = new THREE.PointLight(0x8888ff, 1.5, 25, 1.5);
+scene.add(pLight2);
+
+// ═══ ORBS — equally spaced grid ═══
+const ORB_SPACING = 8; // distance between orbs
+const ORB_GRID = 7;    // 7x7 = 49 orbs visible
+const ORB_HALF = Math.floor(ORB_GRID / 2);
+
+const orbGeo = new THREE.SphereGeometry(0.22, 48, 48);
+const orbGroup = new THREE.Group();
+scene.add(orbGroup);
+
+let goldOrb = null;
+let orbList = []; // {mesh, light, isGold, basePos, phase}
+let round = 1;
+let won = false;
+
+function goldMat() {
+  return new THREE.MeshStandardMaterial({
+    color: 0xffd700,
+    emissive: 0xffaa00,
+    emissiveIntensity: 1.2,
+    metalness: 0.95,
+    roughness: 0.05
+  });
+}
+
+function decoyMat(i) {
+  const hue = (i * 0.137 + 0.05) % 1.0;
+  const c = new THREE.Color().setHSL(hue, 0.6, 0.45);
+  return new THREE.MeshStandardMaterial({
+    color: c,
+    emissive: c,
+    emissiveIntensity: 0.5,
+    metalness: 0.6,
+    roughness: 0.15,
+    transparent: true,
+    opacity: 0.9
+  });
+}
+
+function spawnOrbs() {
+  // Clear
+  while (orbGroup.children.length) {
+    const c = orbGroup.children[0];
+    orbGroup.remove(c);
+  }
+  for (const o of orbList) {
+    if (o.light) scene.remove(o.light);
+  }
+  orbList = [];
+
+  // Pick random gold position in the grid
+  const goldGX = Math.floor(Math.random() * ORB_GRID) - ORB_HALF;
+  const goldGZ = Math.floor(Math.random() * ORB_GRID) - ORB_HALF;
+
+  let idx = 0;
+  for (let ox = -ORB_HALF; ox <= ORB_HALF; ox++) {
+    for (let oz = -ORB_HALF; oz <= ORB_HALF; oz++) {
+      const isGold = (ox === goldGX && oz === goldGZ);
+      const mat = isGold ? goldMat() : decoyMat(idx);
+      const mesh = new THREE.Mesh(orbGeo, mat);
+
+      const wx = camera.position.x + ox * ORB_SPACING;
+      const wz = camera.position.z + oz * ORB_SPACING;
+      const wy = 1.5 + Math.sin(ox * 3.7 + oz * 2.3) * 0.8;
+
+      mesh.position.set(wx, wy, wz);
+      mesh.castShadow = true;
       orbGroup.add(mesh);
 
-      // Point light on each orb
-      var orbLight = new THREE.PointLight(
-        isGold ? 0xffd700 : mat.color.getHex(),
-        isGold ? 2 : 0.8,
-        5
-      );
-      orbLight.position.copy(mesh.position);
-      scene.add(orbLight);
+      // Point light per orb
+      const lc = isGold ? 0xffd700 : mat.color.getHex();
+      const li = new THREE.PointLight(lc, isGold ? 3 : 1, 6, 2);
+      li.position.copy(mesh.position);
+      scene.add(li);
 
-      orbData.push({
-        mesh: mesh,
-        light: orbLight,
-        gold: isGold,
-        baseY: pos.y,
-        phase: Math.random() * Math.PI * 2,
-        collected: false
-      });
+      const entry = {
+        mesh, light: li, isGold,
+        baseX: wx, baseY: wy, baseZ: wz,
+        phase: Math.random() * Math.PI * 2
+      };
+      orbList.push(entry);
+      if (isGold) goldOrb = entry;
+      idx++;
+    }
+  }
+}
+
+spawnOrbs();
+
+// ═══ PLAYER ═══
+let yaw = 0, pitch = 0;
+const keys = {};
+let started = false, tStart = 0;
+
+window.addEventListener('keydown', e => { keys[e.code] = true; });
+window.addEventListener('keyup', e => { keys[e.code] = false; });
+
+let locked = false;
+window.addEventListener('mousemove', e => {
+  if (!started || !locked) return;
+  yaw += e.movementX * 0.0018;
+  pitch -= e.movementY * 0.0018;
+  pitch = Math.max(-1.4, Math.min(1.4, pitch));
+});
+
+document.addEventListener('pointerlockchange', () => {
+  locked = document.pointerLockElement === canvas;
+});
+
+document.getElementById('go').addEventListener('click', () => {
+  canvas.requestPointerLock();
+  started = true;
+  tStart = performance.now();
+  document.getElementById('S').classList.add('gone');
+});
+
+// Raycaster for clicking orbs
+const raycaster = new THREE.Raycaster();
+raycaster.far = 25;
+
+canvas.addEventListener('click', () => {
+  if (!started) return;
+  if (!locked) { try { canvas.requestPointerLock(); } catch (e) {} return; }
+  if (won) return;
+
+  raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+  const hits = raycaster.intersectObjects(orbGroup.children);
+
+  if (hits.length > 0) {
+    const hitMesh = hits[0].object;
+    const entry = orbList.find(o => o.mesh === hitMesh);
+    if (!entry) return;
+
+    if (entry.isGold) {
+      // Correct!
+      entry.mesh.visible = false;
+      entry.light.intensity = 0;
+      won = true;
+
+      document.getElementById('flash').classList.add('on');
+      setTimeout(() => document.getElementById('flash').classList.remove('on'), 350);
+
+      const h = document.getElementById('hint');
+      h.textContent = '✓ Round ' + round + ' cleared!';
+      h.style.color = 'rgba(100,255,150,.95)';
+      h.style.opacity = '1';
+      document.getElementById('sbox').textContent = 'Round ' + round + ' cleared!';
+
+      setTimeout(() => {
+        h.style.opacity = '0';
+        round++;
+        won = false;
+        spawnOrbs();
+        tStart = performance.now();
+        document.getElementById('sbox').textContent = 'Round ' + round + ' — Find the GOLD orb';
+      }, 2200);
+    } else {
+      // Wrong
+      entry.mesh.visible = false;
+      entry.light.intensity = 0;
+      const h = document.getElementById('hint');
+      h.textContent = '✗ Wrong orb!';
+      h.style.color = 'rgba(255,80,80,.95)';
+      h.style.opacity = '1';
+      setTimeout(() => { h.style.opacity = '0'; }, 1100);
+    }
+  }
+});
+
+// ═══ RESIZE ═══
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+  composer.setSize(innerWidth, innerHeight);
+  bloom.resolution.set(innerWidth, innerHeight);
+});
+
+// ═══ INFINITE ROOM REPOSITIONING ═══
+// As the player moves, shift room tiles so they always surround the player
+function updateRooms() {
+  const pcx = Math.round(camera.position.x / CELL);
+  const pcz = Math.round(camera.position.z / CELL);
+
+  for (const r of rooms) {
+    r.group.position.x = (r.gx + pcx) * CELL;
+    r.group.position.z = (r.gz + pcz) * CELL;
+  }
+}
+
+// ═══ GAME LOOP ═══
+const clock = new THREE.Clock();
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  const t = clock.getElapsedTime();
+
+  // Movement — infinite, no bounds
+  if (started && !won) {
+    const sp = 5.0 * dt;
+    const fx = Math.sin(yaw), fz = -Math.cos(yaw);
+    const rx = Math.cos(yaw), rz = Math.sin(yaw);
+
+    if (keys.KeyW) { camera.position.x += fx * sp; camera.position.z += fz * sp; }
+    if (keys.KeyS) { camera.position.x -= fx * sp; camera.position.z -= fz * sp; }
+    if (keys.KeyA) { camera.position.x -= rx * sp; camera.position.z -= rz * sp; }
+    if (keys.KeyD) { camera.position.x += rx * sp; camera.position.z += rz * sp; }
+
+    const el = (performance.now() - tStart) / 1000;
+    const mn = Math.floor(el / 60), sc = Math.floor(el % 60);
+    document.getElementById('tbox').textContent = mn + ':' + (sc < 10 ? '0' : '') + sc;
+  }
+
+  // Camera rotation
+  camera.rotation.order = 'YXZ';
+  camera.rotation.y = -yaw;
+  camera.rotation.x = pitch;
+
+  // Lights follow player
+  pLight1.position.set(camera.position.x, CEIL_H - 0.3, camera.position.z);
+  pLight2.position.set(camera.position.x + 3, 2, camera.position.z + 3);
+
+  // Reposition room tiles for infinite effect
+  updateRooms();
+
+  // Animate orbs
+  for (const o of orbList) {
+    if (!o.mesh.visible) continue;
+    o.mesh.position.y = o.baseY + Math.sin(t * 1.5 + o.phase) * 0.15;
+    o.mesh.rotation.y = t * 0.4 + o.phase;
+    o.light.position.copy(o.mesh.position);
+
+    if (o.isGold) {
+      o.mesh.material.emissiveIntensity = 0.8 + 0.5 * Math.sin(t * 3);
+      o.light.intensity = 2 + Math.sin(t * 3) * 1.5;
     }
   }
 
-  spawnOrbs();
+  // Render with bloom
+  composer.render();
+}
 
-  // ═══ PLAYER CONTROLS ═══
-  var yaw = 0, pitch = 0;
-  var keys = {};
-  var started = false, won = false, round = 1;
-  var tStart = 0;
-
-  window.addEventListener("keydown", function (e) { keys[e.code] = true; });
-  window.addEventListener("keyup", function (e) { keys[e.code] = false; });
-
-  var locked = false;
-  window.addEventListener("mousemove", function (e) {
-    if (!started || !locked) return;
-    yaw += e.movementX * 0.002;
-    pitch -= e.movementY * 0.002;
-    pitch = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, pitch));
-  });
-
-  document.addEventListener("pointerlockchange", function () {
-    locked = document.pointerLockElement === renderer.domElement;
-  });
-
-  // Start
-  document.getElementById("go").addEventListener("click", function () {
-    renderer.domElement.requestPointerLock();
-    started = true;
-    tStart = performance.now();
-    document.getElementById("start").classList.add("gone");
-  });
-
-  // Click to collect
-  var raycaster = new THREE.Raycaster();
-  raycaster.far = 20;
-
-  renderer.domElement.addEventListener("click", function () {
-    if (!started) return;
-    if (!locked) {
-      renderer.domElement.requestPointerLock();
-      return;
-    }
-    if (won) return;
-
-    // Raycast from center of screen
-    raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
-    var hits = raycaster.intersectObjects(orbGroup.children);
-
-    if (hits.length > 0) {
-      var hitMesh = hits[0].object;
-      // Find which orb
-      for (var i = 0; i < orbData.length; i++) {
-        if (orbData[i].mesh === hitMesh && !orbData[i].collected) {
-          if (orbData[i].gold) {
-            // Correct!
-            orbData[i].collected = true;
-            hitMesh.visible = false;
-            orbData[i].light.intensity = 0;
-            won = true;
-
-            document.getElementById("flash").classList.add("on");
-            setTimeout(function () { document.getElementById("flash").classList.remove("on"); }, 300);
-
-            var hint = document.getElementById("hint");
-            hint.textContent = "✓ ESCAPED — Round " + round + " complete!";
-            hint.style.opacity = "1";
-            hint.style.color = "rgba(100,255,150,.9)";
-
-            document.getElementById("scorebox").textContent = "Round " + round + " cleared!";
-
-            // Next round after delay
-            setTimeout(function () {
-              hint.style.opacity = "0";
-              round++;
-              NUM_DECOYS = Math.min(NUM_DECOYS + 2, 25);
-              spawnOrbs();
-              won = false;
-              tStart = performance.now();
-              document.getElementById("scorebox").textContent = "Round " + round + " — Find the GOLD orb (" + (NUM_DECOYS + 1) + " orbs)";
-            }, 2500);
-          } else {
-            // Wrong orb!
-            orbData[i].collected = true;
-            hitMesh.visible = false;
-            orbData[i].light.intensity = 0;
-
-            var hint = document.getElementById("hint");
-            hint.textContent = "✗ Wrong orb!";
-            hint.style.opacity = "1";
-            hint.style.color = "rgba(255,80,80,.9)";
-            setTimeout(function () { hint.style.opacity = "0"; }, 1200);
-          }
-          break;
-        }
-      }
-    }
-  });
-
-  // ═══ RESIZE ═══
-  window.addEventListener("resize", function () {
-    camera.aspect = innerWidth / innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(innerWidth, innerHeight);
-  });
-
-  // ═══ GAME LOOP ═══
-  var frameCount = 0;
-
-  function animate() {
-    requestAnimationFrame(animate);
-    var t = performance.now() / 1000;
-
-    // Player movement
-    if (started && !won) {
-      var speed = 0.08;
-      var fwdX = Math.sin(yaw), fwdZ = -Math.cos(yaw);
-      var rgtX = Math.cos(yaw), rgtZ = Math.sin(yaw);
-
-      if (keys.KeyW) { camera.position.x += fwdX * speed; camera.position.z += fwdZ * speed; }
-      if (keys.KeyS) { camera.position.x -= fwdX * speed; camera.position.z -= fwdZ * speed; }
-      if (keys.KeyA) { camera.position.x -= rgtX * speed; camera.position.z -= rgtZ * speed; }
-      if (keys.KeyD) { camera.position.x += rgtX * speed; camera.position.z += rgtZ * speed; }
-
-      // Clamp to room
-      var mx = roomW / 2 - 0.5, mz = roomD / 2 - 0.5;
-      camera.position.x = Math.max(-mx, Math.min(mx, camera.position.x));
-      camera.position.z = Math.max(-mz, Math.min(mz, camera.position.z));
-
-      // Timer
-      var el = (performance.now() - tStart) / 1000;
-      var mn = Math.floor(el / 60), sc = Math.floor(el % 60);
-      document.getElementById("timerbox").textContent = mn + ":" + (sc < 10 ? "0" : "") + sc;
-    }
-
-    // Camera rotation
-    camera.rotation.order = "YXZ";
-    camera.rotation.y = -yaw;
-    camera.rotation.x = pitch;
-
-    // Bob orbs
-    for (var i = 0; i < orbData.length; i++) {
-      if (orbData[i].collected) continue;
-      var o = orbData[i];
-      o.mesh.position.y = o.baseY + Math.sin(t * 1.5 + o.phase) * 0.15;
-      o.mesh.rotation.y = t * 0.5 + o.phase;
-      o.light.position.copy(o.mesh.position);
-
-      // Gold orb pulses brighter
-      if (o.gold) {
-        o.mesh.material.emissiveIntensity = 0.6 + 0.4 * Math.sin(t * 3);
-        o.light.intensity = 1.5 + Math.sin(t * 3) * 0.8;
-      }
-    }
-
-    // Update cube camera for reflections every few frames (perf)
-    frameCount++;
-    if (frameCount % 3 === 0) {
-      // Hide orbs temporarily for cleaner reflection
-      cubeCamera.position.copy(camera.position);
-      cubeCamera.update(renderer, scene);
-    }
-
-    renderer.render(scene, camera);
-  }
-
-  animate();
-})();
+animate();
