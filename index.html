@@ -5,94 +5,50 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Mirror Room</title>
   <style>
-    *{margin:0;padding:0}
+    *{margin:0;padding:0;box-sizing:border-box}
     body{background:#000;overflow:hidden;font-family:system-ui,sans-serif}
-    canvas{display:block;width:100vw;height:100vh}
-
-    #overlay{
-      position:fixed;inset:0;z-index:10;pointer-events:none;
-      display:flex;flex-direction:column;justify-content:space-between;
-    }
-
-    #hud{
-      display:flex;justify-content:space-between;padding:16px 24px;
-    }
-    .hud-box{
-      background:rgba(0,0,0,.5);backdrop-filter:blur(8px);
-      padding:8px 16px;border-radius:10px;
-      font-size:13px;color:rgba(255,255,255,.7);
-      border:1px solid rgba(255,255,255,.06);
-    }
-
-    #crosshair{
-      position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
-      width:20px;height:20px;z-index:11;pointer-events:none;
-    }
-    #crosshair::before,#crosshair::after{
-      content:'';position:absolute;background:rgba(255,255,255,.5);border-radius:1px;
-    }
-    #crosshair::before{width:2px;height:100%;left:50%;transform:translateX(-50%)}
-    #crosshair::after{height:2px;width:100%;top:50%;transform:translateY(-50%)}
-
-    #msg{
-      text-align:center;padding-bottom:20px;
-      font-size:12px;color:rgba(255,255,255,.3);
-    }
-
-    #start-screen{
-      position:fixed;inset:0;z-index:20;
-      background:rgba(0,0,0,.9);backdrop-filter:blur(20px);
-      display:flex;flex-direction:column;align-items:center;justify-content:center;
-      gap:20px;cursor:pointer;transition:opacity .5s;
-    }
-    #start-screen.hidden{opacity:0;pointer-events:none}
-    #start-screen h1{
-      font-size:42px;font-weight:200;color:#fff;letter-spacing:8px;
-    }
-    #start-screen p{font-size:14px;color:rgba(255,255,255,.4)}
-    #start-screen .key{
-      display:inline-block;padding:2px 8px;border:1px solid rgba(255,255,255,.2);
-      border-radius:4px;font-size:12px;color:rgba(255,255,255,.5);margin:0 2px;
-    }
-    #start-btn{
-      margin-top:16px;padding:14px 48px;font-size:16px;letter-spacing:3px;
-      background:rgba(255,255,255,.08);color:#fff;border:1px solid rgba(255,255,255,.15);
-      border-radius:12px;cursor:pointer;transition:all .2s;pointer-events:auto;
-    }
-    #start-btn:hover{background:rgba(255,255,255,.15);transform:scale(1.05)}
-
-    #collect-flash{
-      position:fixed;inset:0;z-index:15;pointer-events:none;
-      background:radial-gradient(circle,rgba(100,200,255,.15),transparent 70%);
-      opacity:0;transition:opacity .15s;
-    }
-    #collect-flash.show{opacity:1}
+    canvas{display:block}
+    #hud{position:fixed;top:0;left:0;right:0;display:flex;justify-content:space-between;padding:16px 24px;pointer-events:none;z-index:10}
+    .hud-box{background:rgba(0,0,0,.6);backdrop-filter:blur(8px);padding:8px 16px;border-radius:10px;font-size:14px;color:rgba(255,255,255,.8);border:1px solid rgba(255,255,255,.08)}
+    #crosshair{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:11;pointer-events:none}
+    #crosshair::before,#crosshair::after{content:'';position:absolute;background:rgba(255,255,255,.6);border-radius:1px}
+    #crosshair::before{width:2px;height:24px;left:50%;transform:translateX(-50%)}
+    #crosshair::after{height:2px;width:24px;top:50%;transform:translateY(-50%)}
+    #msg{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);font-size:13px;color:rgba(255,255,255,.35);pointer-events:none;z-index:10;background:rgba(0,0,0,.5);padding:6px 16px;border-radius:20px;backdrop-filter:blur(8px)}
+    #start{position:fixed;inset:0;z-index:20;background:rgba(0,0,0,.92);backdrop-filter:blur(20px);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;transition:opacity .5s}
+    #start.gone{opacity:0;pointer-events:none}
+    #start h1{font-size:48px;font-weight:200;color:#fff;letter-spacing:10px}
+    #start p{font-size:14px;color:rgba(255,255,255,.4);text-align:center;line-height:1.8}
+    .key{display:inline-block;padding:2px 8px;border:1px solid rgba(255,255,255,.2);border-radius:4px;font-size:12px;color:rgba(255,255,255,.5);margin:0 2px}
+    #go{margin-top:12px;padding:14px 52px;font-size:16px;letter-spacing:3px;background:rgba(255,255,255,.08);color:#fff;border:1px solid rgba(255,255,255,.15);border-radius:12px;cursor:pointer;transition:all .2s}
+    #go:hover{background:rgba(255,255,255,.15);transform:scale(1.05)}
+    #hint{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:12;pointer-events:none;font-size:16px;color:rgba(100,200,255,.8);opacity:0;transition:opacity .3s;text-shadow:0 0 20px rgba(100,200,255,.5)}
+    #flash{position:fixed;inset:0;z-index:9;pointer-events:none;background:radial-gradient(circle,rgba(100,200,255,.2),transparent 70%);opacity:0;transition:opacity .15s}
+    #flash.on{opacity:1}
   </style>
 </head>
 <body>
-  <canvas id="c"></canvas>
   <div id="crosshair"></div>
-  <div id="collect-flash"></div>
-
-  <div id="overlay">
-    <div id="hud">
-      <div class="hud-box" id="score-box">✦ 0 / 5</div>
-      <div class="hud-box" id="timer-box">⏱ 0:00</div>
-    </div>
-    <div id="msg">WASD move · Mouse look · Click to collect orbs</div>
+  <div id="hint"></div>
+  <div id="flash"></div>
+  <div id="hud">
+    <div class="hud-box" id="scorebox">Find the GOLD orb</div>
+    <div class="hud-box" id="timerbox">0:00</div>
   </div>
-
-  <div id="start-screen">
+  <div id="msg">WASD move · Mouse look · Click orb to collect</div>
+  <div id="start">
     <h1>MIRROR ROOM</h1>
-    <p>Find the glowing orbs hidden in the reflections</p>
+    <p>You're trapped in an infinite mirror room.<br>
+    Orbs float everywhere — but only ONE is real.<br>
+    Find and click the <span style="color:#ffd700">GOLD</span> orb to escape.</p>
     <p>
       <span class="key">W</span><span class="key">A</span><span class="key">S</span><span class="key">D</span> move ·
       <span class="key">Mouse</span> look ·
       <span class="key">Click</span> collect
     </p>
-    <button id="start-btn">▶ START</button>
+    <button id="go">▶ ENTER</button>
   </div>
-
-  <script src="main.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="game.js"></script>
 </body>
 </html>
