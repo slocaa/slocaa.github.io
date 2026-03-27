@@ -1,459 +1,262 @@
-(() => {
+(function(){
 "use strict";
+var C=document.getElementById("c");
+var gl=C.getContext("webgl");
+if(!gl){document.body.textContent="WebGL required";return;}
 
-const canvas = document.getElementById("c");
-const gl = canvas.getContext("webgl");
-if (!gl) { document.body.textContent = "WebGL required"; return; }
+var FS='precision highp float;\n'+
+'uniform vec2 uR;\n'+
+'uniform float uT;\n'+
+'uniform vec3 uP;\n'+
+'uniform vec2 uA;\n'+
+'uniform vec4 uO[5];\n'+
+'uniform float uF;\n'+
+'#define S 100\n'+
+'#define D 80.0\n'+
+'#define E 0.001\n'+
+'#define B 8\n'+
+'#define RX 7.0\n'+
+'#define RY 4.0\n'+
+'#define RZ 10.0\n'+
+'float mW(vec3 p){vec3 d=vec3(RX,RY,RZ)-abs(p);return min(d.x,min(d.y,d.z));}\n'+
+'vec2 mO(vec3 p){float b=1e10;float x=-1.0;for(int i=0;i<5;i++){if(uO[i].w<.5)continue;float d=length(p-uO[i].xyz)-.25;if(d<b){b=d;x=float(i);}}return vec2(b,x);}\n'+
+'vec2 sc(vec3 p){float w=mW(p);vec2 o=mO(p);if(o.x<w)return vec2(o.x,1.);return vec2(w,0.);}\n'+
+'vec3 wN(vec3 p){vec3 a=abs(p);vec3 d=vec3(RX,RY,RZ)-a;if(d.x<d.y&&d.x<d.z)return vec3(-sign(p.x),0,0);if(d.y<d.z)return vec3(0,-sign(p.y),0);return vec3(0,0,-sign(p.z));}\n'+
+'vec3 oN(vec3 p){float b=1e10;vec3 c=vec3(0);for(int i=0;i<5;i++){if(uO[i].w<.5)continue;float d=length(p-uO[i].xyz);if(d<b){b=d;c=uO[i].xyz;}}return normalize(p-c);}\n'+
+'vec3 rm(vec3 ro,vec3 rd){float t=0.;for(int i=0;i<S;i++){vec2 h=sc(ro+rd*t);if(h.x<E)return vec3(t,h.y,float(i));if(t>D)break;t+=h.x;}return vec3(-1,-1,0);}\n';
 
-// ══════════════════════════════════════════════════
-// FRAGMENT SHADER — Raymarched mirror room with
-// reflective walls, glowing orbs, and infinite
-// reflections that make reality hard to parse.
-// ══════════════════════════════════════════════════
 
-const FRAG = `
-precision highp float;
+// Lighting + materials part of shader
+var FS2=
+'vec3 gLP(int i){if(i==0)return vec3(2.5,RY-.05,3.5);if(i==1)return vec3(-2.5,RY-.05,3.5);if(i==2)return vec3(2.5,RY-.05,-3.5);return vec3(-2.5,RY-.05,-3.5);}\n'+
+'float isLP(vec3 p){if(abs(p.y-RY)>.05)return 0.;float v=0.;for(int i=0;i<4;i++){vec3 l=gLP(i);if(abs(p.x-l.x)<.8&&abs(p.z-l.z)<1.2)v=1.;}return v;}\n'+
+'vec3 cL(vec3 p,vec3 n,vec3 V,vec3 al,float ro,float me){\n'+
+'  vec3 c=vec3(0);vec3 lc=vec3(1,.96,.9);\n'+
+'  for(int i=0;i<4;i++){\n'+
+'    vec3 lp=gLP(i);vec3 L=lp-p;float di=length(L);L/=di;\n'+
+'    float at=12./(di*di+.5);\n'+
+'    float NdL=max(dot(n,L),0.);\n'+
+'    vec3 df=al*(1.-me)*NdL;\n'+
+'    vec3 H=normalize(L+V);float NdH=max(dot(n,H),0.);\n'+
+'    float sp=pow(NdH,2./max(ro*ro,.001))*(1.-ro)*.5;\n'+
+'    vec3 sc=mix(vec3(1),al,me);\n'+
+'    c+=(df+sc*sp)*lc*at;\n'+
+'  }\n'+
+'  c+=al*vec3(.02,.02,.04);\n'+
+'  float ao=1.;for(int j=1;j<=3;j++){float fi=float(j);float ex=.15*fi;float ac=mW(p+n*ex);ao-=(ex-min(ac,ex))/(fi*.8);}ao=clamp(ao,0.,1.);\n'+
+'  return c*ao;\n'+
+'}\n'+
+'float fres(float ct,float f0){return f0+(1.-f0)*pow(1.-ct,5.);}\n'+
+'vec3 fM(vec3 p){vec2 uv=p.xz*.5;vec2 id=floor(uv);vec2 f=fract(uv);float ch=mod(id.x+id.y,2.);vec3 c=mix(vec3(.08,.08,.1),vec3(.12,.12,.15),ch);float gx=smoothstep(0.,.02,f.x)*smoothstep(0.,.02,1.-f.x);float gy=smoothstep(0.,.02,f.y)*smoothstep(0.,.02,1.-f.y);return c*gx*gy;}\n'+
+'float wP(vec3 p,vec3 n){vec3 a=abs(n);vec2 uv;if(a.y>.5)uv=p.xz;else if(a.x>.5)uv=p.yz;else uv=p.xy;uv*=.4;vec2 f=fract(uv);return smoothstep(0.,.025,f.x)*smoothstep(0.,.025,1.-f.x)*smoothstep(0.,.025,f.y)*smoothstep(0.,.025,1.-f.y);}\n'+
+'vec3 oG(vec3 ro,vec3 rd){vec3 g=vec3(0);for(int i=0;i<5;i++){if(uO[i].w<.5)continue;vec3 oc=uO[i].xyz-ro;float t=max(dot(oc,rd),0.);float d=length(oc-rd*t);float g1=.06/(d*d+.008);float g2=.005/(d*d*d+.0001);float pu=.75+.25*sin(uT*2.5+float(i)*1.7);vec3 c=.5+.5*cos(6.283*(float(i)*.18+vec3(0,.33,.67)));g+=c*(g1+g2)*pu;}return g;}\n';
 
-uniform vec2 uRes;
-uniform float uTime;
-uniform vec3 uCamPos;
-uniform vec2 uCamRot; // yaw, pitch
-uniform vec4 uOrbs[5]; // xyz = position, w = 1 if active
-uniform float uCollectAnim; // flash on collect
 
-#define MAX_STEPS 100
-#define MAX_DIST 60.0
-#define SURF 0.002
-#define MAX_BOUNCES 6
+// Main function of shader
+var FS3=
+'void main(){\n'+
+'  vec2 uv=(gl_FragCoord.xy-uR*.5)/min(uR.x,uR.y);\n'+
+'  float yw=uA.x;float pt=uA.y;\n'+
+'  vec3 fw=vec3(sin(yw)*cos(pt),sin(pt),-cos(yw)*cos(pt));\n'+
+'  vec3 rt=normalize(cross(vec3(0,1,0),fw));\n'+
+'  vec3 up=cross(fw,rt);\n'+
+'  vec3 rd=normalize(fw+uv.x*rt+uv.y*up);\n'+
+'  vec3 ro=uP;\n'+
+'  vec3 col=vec3(0);vec3 tp=vec3(1);\n'+
+'  for(int bounce=0;bounce<B;bounce++){\n'+
+'    col+=tp*oG(ro,rd)*.15;\n'+
+'    vec3 hit=rm(ro,rd);\n'+
+'    if(hit.x<0.){col+=tp*vec3(.003);break;}\n'+
+'    vec3 p=ro+rd*hit.x;\n'+
+'    if(hit.y>.5){\n'+
+'      vec3 n=oN(p);\n'+
+'      vec3 oc=.5+.5*cos(6.283*(uT*.12+vec3(0,.33,.67)));\n'+
+'      vec3 lt=cL(p,n,-rd,oc,.1,.3);\n'+
+'      col+=tp*(lt*2.+oc*2.);\n'+
+'      float fr=fres(abs(dot(rd,n)),.04)*.4;\n'+
+'      rd=reflect(rd,n);ro=p+n*.02;tp*=oc*fr;continue;\n'+
+'    }\n'+
+'    vec3 n=wN(p);\n'+
+'    float lp=isLP(p);\n'+
+'    if(lp>.5){col+=tp*vec3(1,.97,.92)*4.;break;}\n'+
+'    float pn=wP(p,n);\n'+
+'    vec3 al=vec3(.92,.92,.95);float ro2=.02;float me=.95;float rf=.92;\n'+
+'    if(n.y>.5){al=fM(p);ro2=.05;me=.1;rf=.7;}\n'+
+'    if(n.y<-.5){al=vec3(.15,.15,.18);ro2=.3;me=0.;rf=.3;}\n'+
+'    al=mix(vec3(.005),al,pn);rf*=pn;\n'+
+'    vec3 lt=cL(p,n,-rd,al,ro2,me);\n'+
+'    col+=tp*lt*(1.-rf*.5);\n'+
+'    float ct=abs(dot(rd,n));float fr=fres(ct,rf);\n'+
+'    rd=reflect(rd,n);ro=p+n*.01;\n'+
+'    tp*=mix(vec3(1),al,me)*fr;\n'+
+'    if(dot(tp,tp)<.0001)break;\n'+
+'  }\n'+
+'  float lm=dot(col,vec3(.299,.587,.114));\n'+
+'  col+=col*smoothstep(1.,3.,lm)*.15;\n'+
+'  col+=vec3(.12,.35,1)*uF*.6;\n'+
+'  float ca=length(uv)*.003;\n'+
+'  col.r*=(1.+ca);col.b*=(1.-ca);\n'+
+'  col*=1.-dot(uv,uv)*.4;\n'+
+'  col+=vec3(fract(sin(dot(gl_FragCoord.xy,vec2(12.9898,78.233))+uT)*43758.5453)-.5)*.015;\n'+
+'  col=col*(2.51*col+.03)/(col*(2.43*col+.59)+.14);\n'+
+'  col=pow(clamp(col,0.,1.),vec3(.88));\n'+
+'  gl_FragColor=vec4(col,1);\n'+
+'}\n';
 
-mat2 rot(float a){float s=sin(a),c=cos(a);return mat2(c,-s,s,c);}
+var FRAG=FS+FS2+FS3;
+var VERT='attribute vec2 a;void main(){gl_Position=vec4(a,0,1);}';
 
-// Room dimensions
-const vec3 ROOM = vec3(6.0, 3.5, 8.0);
 
-// Signed distance to the inside of a box (room)
-float sdRoom(vec3 p) {
-  vec3 d = abs(p) - ROOM;
-  // We want the INSIDE, so negate
-  return -min(max(d.x, max(d.y, d.z)), 0.0) + length(max(d, 0.0));
+// ── GL SETUP ──
+function mk(type,src){
+  var s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);
+  if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)){
+    var e=gl.getShaderInfoLog(s);console.error("SHADER:",e);
+    document.body.textContent="Shader error: "+e;return null;
+  }return s;
 }
-
-// Distance to room walls (inverted box)
-float mapRoom(vec3 p) {
-  vec3 q = abs(p);
-  // Distance to nearest wall from inside
-  vec3 d = ROOM - q;
-  return min(d.x, min(d.y, d.z));
+var vs=mk(gl.VERTEX_SHADER,VERT);
+var fs=mk(gl.FRAGMENT_SHADER,FRAG);
+if(!vs||!fs)return;
+var pg=gl.createProgram();
+gl.attachShader(pg,vs);gl.attachShader(pg,fs);gl.linkProgram(pg);
+if(!gl.getProgramParameter(pg,gl.LINK_STATUS)){
+  document.body.textContent="Link error: "+gl.getProgramInfoLog(pg);return;
 }
+gl.useProgram(pg);
+var bf=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,bf);
+gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
+var al=gl.getAttribLocation(pg,"a");gl.enableVertexAttribArray(al);
+gl.vertexAttribPointer(al,2,gl.FLOAT,false,0,0);
 
-// Orb distance
-float sdOrb(vec3 p, vec3 center) {
-  return length(p - center) - 0.2;
+var U={};
+["uR","uT","uP","uA","uF"].forEach(function(n){U[n]=gl.getUniformLocation(pg,n);});
+var uO=[];
+for(var i=0;i<5;i++)uO.push(gl.getUniformLocation(pg,"uO["+i+"]"));
+
+// ═══ GAME ═══
+var RX=7,RY=4,RZ=10;
+var px=0,py=0,pz=0,yaw=0,pitch=0;
+var started=false,score=0,total=5,tStart=0,flash=0,won=false;
+var orbs=[];
+
+function spawn(){
+  orbs=[];score=0;won=false;
+  for(var i=0;i<total;i++)orbs.push({
+    x:(Math.random()-.5)*(RX*2-2),
+    y:-RY+.8+Math.random()*(RY*2-2),
+    z:(Math.random()-.5)*(RZ*2-2),
+    on:true
+  });
 }
+spawn();
 
-// Full scene
-float mapScene(vec3 p, out int hitType) {
-  float room = mapRoom(p);
-  hitType = 0; // 0=room wall (mirror)
+var keys={};
+window.addEventListener("keydown",function(e){keys[e.code]=true;});
+window.addEventListener("keyup",function(e){keys[e.code]=false;});
 
-  float orbs = 1e10;
-  for (int i = 0; i < 5; i++) {
-    if (uOrbs[i].w > 0.5) {
-      float od = sdOrb(p, uOrbs[i].xyz);
-      if (od < orbs) orbs = od;
-    }
-  }
+var locked=false;
 
-  if (orbs < room) {
-    hitType = 1; // orb
-    return orbs;
-  }
-  return room;
-}
-
-// Normal from distance field
-vec3 getNormal(vec3 p) {
-  int dummy;
-  vec2 e = vec2(0.001, 0.0);
-  return normalize(vec3(
-    mapScene(p+e.xyy, dummy) - mapScene(p-e.xyy, dummy),
-    mapScene(p+e.yxy, dummy) - mapScene(p-e.yxy, dummy),
-    mapScene(p+e.yyx, dummy) - mapScene(p-e.yyx, dummy)
-  ));
-}
-
-// March a ray
-float march(vec3 ro, vec3 rd, out int hitType) {
-  float t = 0.0;
-  hitType = -1;
-  for (int i = 0; i < MAX_STEPS; i++) {
-    vec3 p = ro + rd * t;
-    int ht;
-    float d = mapScene(p, ht);
-    if (d < SURF) { hitType = ht; return t; }
-    if (t > MAX_DIST) break;
-    t += d;
-  }
-  return -1.0;
-}
-
-// Orb glow — volumetric approximation
-vec3 orbGlow(vec3 ro, vec3 rd) {
-  vec3 glow = vec3(0.0);
-  for (int i = 0; i < 5; i++) {
-    if (uOrbs[i].w < 0.5) continue;
-    vec3 oc = uOrbs[i].xyz;
-    // Closest approach of ray to orb center
-    float t = max(dot(oc - ro, rd), 0.0);
-    vec3 cp = ro + rd * t - oc;
-    float dist = length(cp);
-    // Glow intensity
-    float g = 0.04 / (dist * dist + 0.01);
-    // Pulsing
-    float pulse = 0.7 + 0.3 * sin(uTime * 3.0 + float(i) * 1.5);
-    // Color varies per orb
-    vec3 col = 0.5 + 0.5 * cos(6.28 * (float(i) * 0.2 + vec3(0.0, 0.33, 0.67)));
-    glow += col * g * pulse;
-  }
-  return glow;
-}
-
-// Mirror tint — slight color based on wall normal
-vec3 mirrorTint(vec3 n) {
-  vec3 an = abs(n);
-  // Floor/ceiling slightly warm, walls slightly cool
-  if (an.y > 0.9) return vec3(0.92, 0.90, 0.95);
-  if (an.x > 0.9) return vec3(0.88, 0.90, 0.95);
-  return vec3(0.90, 0.92, 0.96);
-}
-
-// Grid pattern on mirrors — subtle, like real mirror panels
-float gridPattern(vec3 p, vec3 n) {
-  vec3 an = abs(n);
-  vec2 uv;
-  if (an.y > 0.9) uv = p.xz;
-  else if (an.x > 0.9) uv = p.yz;
-  else uv = p.xy;
-
-  vec2 grid = abs(fract(uv * 0.5) - 0.5);
-  float line = min(grid.x, grid.y);
-  return smoothstep(0.0, 0.02, line);
-}
-
-void main() {
-  vec2 uv = (gl_FragCoord.xy - uRes * 0.5) / min(uRes.x, uRes.y);
-
-  // Camera setup
-  vec3 ro = uCamPos;
-  vec3 fwd = vec3(sin(uCamRot.x)*cos(uCamRot.y), sin(uCamRot.y), -cos(uCamRot.x)*cos(uCamRot.y));
-  vec3 right = normalize(cross(vec3(0,1,0), fwd));
-  vec3 up = cross(fwd, right);
-  vec3 rd = normalize(fwd + uv.x * right + uv.y * up);
-
-  vec3 col = vec3(0.0);
-  vec3 throughput = vec3(1.0); // How much light survives each bounce
-
-  // Trace with reflections
-  for (int bounce = 0; bounce < MAX_BOUNCES; bounce++) {
-    int hitType;
-    float t = march(ro, rd, hitType);
-
-    // Accumulate orb glow along every ray segment
-    col += throughput * orbGlow(ro, rd) * 0.3;
-
-    if (t < 0.0) {
-      // Missed — dark void (shouldn't happen inside room)
-      col += throughput * vec3(0.01);
-      break;
-    }
-
-    vec3 p = ro + rd * t;
-    vec3 n = getNormal(p);
-
-    if (hitType == 1) {
-      // Hit an orb — bright emissive
-      vec3 orbCol = 0.5 + 0.5 * cos(6.28 * (uTime * 0.1 + vec3(0.0, 0.33, 0.67)));
-      col += throughput * orbCol * 2.0;
-      break;
-    }
-
-    // Hit mirror wall
-    // Subtle grid lines on the mirror panels
-    float grid = gridPattern(p, n);
-    vec3 tint = mirrorTint(n);
-
-    // Edge darkening where panels meet
-    col += throughput * tint * (1.0 - grid) * 0.03;
-
-    // Reflect
-    rd = reflect(rd, n);
-    ro = p + n * 0.01; // Offset to avoid self-intersection
-
-    // Each bounce absorbs a little light — mirrors aren't perfect
-    throughput *= tint * 0.88;
-
-    // Diminishing returns
-    if (length(throughput) < 0.01) break;
-  }
-
-  // Collect flash effect
-  col += vec3(0.2, 0.5, 1.0) * uCollectAnim * 0.3;
-
-  // Vignette
-  float vig = 1.0 - length(uv) * 0.4;
-  col *= vig;
-
-  // Tone map
-  col = col / (1.0 + col);
-  col = pow(col, vec3(0.9));
-
-  gl_FragColor = vec4(col, 1.0);
-}
-`;
-
-const VERT = `attribute vec2 a;void main(){gl_Position=vec4(a,0,1);}`;
-
-function mkShader(type, src) {
-  const s = gl.createShader(type);
-  gl.shaderSource(s, src);
-  gl.compileShader(s);
-  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
-    console.error("Shader:", gl.getShaderInfoLog(s));
-  return s;
-}
-
-const prog = gl.createProgram();
-gl.attachShader(prog, mkShader(gl.VERTEX_SHADER, VERT));
-gl.attachShader(prog, mkShader(gl.FRAGMENT_SHADER, FRAG));
-gl.linkProgram(prog);
-if (!gl.getProgramParameter(prog, gl.LINK_STATUS))
-  console.error("Link:", gl.getProgramInfoLog(prog));
-gl.useProgram(prog);
-
-const buf = gl.createBuffer();
-gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,1,1]), gl.STATIC_DRAW);
-const aLoc = gl.getAttribLocation(prog, "a");
-gl.enableVertexAttribArray(aLoc);
-gl.vertexAttribPointer(aLoc, 2, gl.FLOAT, false, 0, 0);
-
-const U = {};
-["uRes","uTime","uCamPos","uCamRot","uCollectAnim"].forEach(n => U[n] = gl.getUniformLocation(prog, n));
-
-// Orb uniforms (array)
-const uOrbs = [];
-for (let i = 0; i < 5; i++) uOrbs.push(gl.getUniformLocation(prog, `uOrbs[${i}]`));
-
-// ══════════════════════════════════════
-// GAME STATE
-// ══════════════════════════════════════
-
-const ROOM = { x: 6, y: 3.5, z: 8 };
-
-// Player
-let px = 0, py = 0, pz = 0; // position (y=0 is eye level)
-let yaw = 0, pitch = 0;
-let started = false;
-let score = 0;
-let totalOrbs = 5;
-let timerStart = 0;
-let collectAnim = 0;
-let gameWon = false;
-
-// Orbs — placed around the room
-let orbs = [];
-
-function spawnOrbs() {
-  orbs = [];
-  score = 0;
-  gameWon = false;
-  for (let i = 0; i < totalOrbs; i++) {
-    orbs.push({
-      x: (Math.random() - 0.5) * (ROOM.x * 2 - 1.5),
-      y: (Math.random() - 0.5) * (ROOM.y * 2 - 1.5),
-      z: (Math.random() - 0.5) * (ROOM.z * 2 - 1.5),
-      active: true
-    });
-  }
-}
-spawnOrbs();
-
-// Keys
-const keys = {};
-window.addEventListener("keydown", e => keys[e.code] = true);
-window.addEventListener("keyup", e => keys[e.code] = false);
-
-// Mouse look — works with pointer lock OR without
-let hasPointerLock = false;
-
-window.addEventListener("mousemove", e => {
-  if (!started) return;
-  if (hasPointerLock) {
-    yaw += e.movementX * 0.002;
-    pitch -= e.movementY * 0.002;
-  } else {
-    // Fallback: mouse position relative to center of screen
-    yaw += e.movementX * 0.002;
-    pitch -= e.movementY * 0.002;
-  }
-  pitch = Math.max(-1.4, Math.min(1.4, pitch));
+// MOUSE — positive movementX = yaw increases = look right
+window.addEventListener("mousemove",function(e){
+  if(!started)return;
+  yaw+=e.movementX*.002;
+  pitch-=e.movementY*.002;
+  pitch=Math.max(-1.4,Math.min(1.4,pitch));
 });
 
-// Click to collect
-canvas.addEventListener("click", () => {
-  if (!started) return;
-  // Re-request pointer lock if lost
-  if (!hasPointerLock) {
-    canvas.requestPointerLock().catch(() => {});
-  }
-  tryCollect();
+C.addEventListener("click",function(){
+  if(!started)return;
+  if(!locked)try{C.requestPointerLock();}catch(x){}
+  collect();
 });
 
-// Start button
-const startScreen = document.getElementById("start-screen");
-document.getElementById("start-btn").addEventListener("click", (e) => {
+document.getElementById("start-btn").addEventListener("click",function(e){
   e.stopPropagation();
-  startGame();
+  if(started)return;
+  try{C.requestPointerLock();}catch(x){}
+  started=true;tStart=performance.now();
+  document.getElementById("start-screen").classList.add("hidden");
 });
 
-function startGame() {
-  if (started) return;
-  // Try pointer lock, but start regardless
-  const lockPromise = canvas.requestPointerLock();
-  if (lockPromise && lockPromise.catch) lockPromise.catch(() => {});
-  started = true;
-  timerStart = performance.now();
-  startScreen.classList.add("hidden");
-}
-
-document.addEventListener("pointerlockchange", () => {
-  hasPointerLock = document.pointerLockElement === canvas;
+document.addEventListener("pointerlockchange",function(){
+  locked=document.pointerLockElement===C;
 });
 
-// ── Collect orb if looking at one ──
-function tryCollect() {
-  const fwd = [
-    Math.sin(yaw) * Math.cos(pitch),
-    Math.sin(pitch),
-    -Math.cos(yaw) * Math.cos(pitch)
-  ];
 
-  for (let i = 0; i < orbs.length; i++) {
-    if (!orbs[i].active) continue;
-    // Vector from player to orb
-    const dx = orbs[i].x - px;
-    const dy = orbs[i].y - py;
-    const dz = orbs[i].z - pz;
-    const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
-    if (dist > 12) continue;
-
-    // Dot product — are we looking at it?
-    const dot = (dx*fwd[0] + dy*fwd[1] + dz*fwd[2]) / dist;
-    if (dot > 0.92) { // ~23 degree cone
-      orbs[i].active = false;
-      score++;
-      collectAnim = 1.0;
-      document.getElementById("score-box").textContent = `✦ ${score} / ${totalOrbs}`;
-
-      // Flash
-      const flash = document.getElementById("collect-flash");
-      flash.classList.add("show");
-      setTimeout(() => flash.classList.remove("show"), 200);
-
-      if (score >= totalOrbs) {
-        gameWon = true;
-        document.getElementById("msg").textContent = "🎉 ALL ORBS FOUND — click to play again";
-        document.getElementById("msg").style.color = "rgba(100,200,255,.7)";
-        // Allow restart
-        setTimeout(() => {
-          canvas.addEventListener("click", restart, { once: true });
-        }, 500);
+function collect(){
+  var fx=Math.sin(yaw)*Math.cos(pitch);
+  var fy=Math.sin(pitch);
+  var fz=-Math.cos(yaw)*Math.cos(pitch);
+  for(var i=0;i<orbs.length;i++){
+    if(!orbs[i].on)continue;
+    var dx=orbs[i].x-px,dy=orbs[i].y-py,dz=orbs[i].z-pz;
+    var dist=Math.sqrt(dx*dx+dy*dy+dz*dz);
+    if(dist>15)continue;
+    var d=(dx*fx+dy*fy+dz*fz)/dist;
+    if(d>.88){
+      orbs[i].on=false;score++;flash=1;
+      document.getElementById("score-box").textContent="\u2726 "+score+" / "+total;
+      var el=document.getElementById("collect-flash");
+      el.classList.add("show");
+      setTimeout(function(){el.classList.remove("show");},250);
+      if(score>=total){
+        won=true;
+        document.getElementById("msg").textContent="\uD83C\uDF89 ALL ORBS FOUND \u2014 click to play again";
+        document.getElementById("msg").style.color="rgba(100,200,255,.7)";
+        setTimeout(function(){C.addEventListener("click",restart,{once:true});},500);
       }
       return;
     }
   }
 }
 
-function restart() {
-  spawnOrbs();
-  px = 0; py = 0; pz = 0;
-  timerStart = performance.now();
-  document.getElementById("score-box").textContent = `✦ 0 / ${totalOrbs}`;
-  document.getElementById("msg").textContent = "WASD move · Mouse look · Click to collect orbs";
-  document.getElementById("msg").style.color = "rgba(255,255,255,.3)";
+function restart(){
+  spawn();px=0;py=0;pz=0;tStart=performance.now();won=false;
+  document.getElementById("score-box").textContent="\u2726 0 / "+total;
+  document.getElementById("msg").textContent="WASD move \u00B7 Mouse look \u00B7 Click to collect orbs";
+  document.getElementById("msg").style.color="rgba(255,255,255,.3)";
 }
 
-// ══════════════════════════════════════
-// RESIZE & RENDER LOOP
-// ══════════════════════════════════════
-
-function resize() {
-  const dpr = Math.min(window.devicePixelRatio || 1, 1.5); // Cap for perf
-  canvas.width = window.innerWidth * dpr;
-  canvas.height = window.innerHeight * dpr;
-  gl.viewport(0, 0, canvas.width, canvas.height);
+function resize(){
+  var dpr=Math.min(window.devicePixelRatio||1,2);
+  C.width=window.innerWidth*dpr;C.height=window.innerHeight*dpr;
+  gl.viewport(0,0,C.width,C.height);
 }
-window.addEventListener("resize", resize);
-resize();
+window.addEventListener("resize",resize);resize();
 
-let lastTime = performance.now();
-
-function frame(now) {
-  const dt = Math.min((now - lastTime) / 1000, 0.05);
-  lastTime = now;
-
-  // ── Movement ──
-  if (started && !gameWon) {
-    const speed = 3.5 * dt;
-    const fwdX = Math.sin(yaw);
-    const fwdZ = -Math.cos(yaw);
-    const rightX = Math.cos(yaw);
-    const rightZ = Math.sin(yaw);
-
-    if (keys["KeyW"]) { px += fwdX * speed; pz += fwdZ * speed; }
-    if (keys["KeyS"]) { px -= fwdX * speed; pz -= fwdZ * speed; }
-    if (keys["KeyA"]) { px -= rightX * speed; pz -= rightZ * speed; }
-    if (keys["KeyD"]) { px += rightX * speed; pz += rightZ * speed; }
-
-    // Clamp to room bounds (with margin)
-    const margin = 0.3;
-    px = Math.max(-ROOM.x + margin, Math.min(ROOM.x - margin, px));
-    pz = Math.max(-ROOM.z + margin, Math.min(ROOM.z - margin, pz));
-    // py stays at 0 (eye level)
+var last=performance.now();
+function frame(now){
+  var dt=Math.min((now-last)/1000,.05);last=now;
+  if(started&&!won){
+    var sp=3.8*dt;
+    var fx=Math.sin(yaw),fz=-Math.cos(yaw);
+    var rx=Math.cos(yaw),rz=Math.sin(yaw);
+    if(keys.KeyW){px+=fx*sp;pz+=fz*sp;}
+    if(keys.KeyS){px-=fx*sp;pz-=fz*sp;}
+    if(keys.KeyA){px-=rx*sp;pz-=rz*sp;}
+    if(keys.KeyD){px+=rx*sp;pz+=rz*sp;}
+    var m=.4;
+    px=Math.max(-RX+m,Math.min(RX-m,px));
+    pz=Math.max(-RZ+m,Math.min(RZ-m,pz));
+    var el=(now-tStart)/1000;
+    var mn=Math.floor(el/60),sc=Math.floor(el%60);
+    document.getElementById("timer-box").textContent="\u23F1 "+mn+":"+(sc<10?"0":"")+sc;
   }
-
-  // Timer
-  if (started && !gameWon) {
-    const elapsed = (now - timerStart) / 1000;
-    const mins = Math.floor(elapsed / 60);
-    const secs = Math.floor(elapsed % 60);
-    document.getElementById("timer-box").textContent = `⏱ ${mins}:${secs.toString().padStart(2, "0")}`;
+  flash*=.9;
+  var t=now/1000;
+  gl.uniform2f(U.uR,C.width,C.height);
+  gl.uniform1f(U.uT,t);
+  gl.uniform3f(U.uP,px,py,pz);
+  gl.uniform2f(U.uA,yaw,pitch);
+  gl.uniform1f(U.uF,flash);
+  for(var i=0;i<5;i++){
+    var o=orbs[i];
+    var bob=o.on?Math.sin(t*1.5+i*2)*.12:0;
+    gl.uniform4f(uO[i],o.x,o.y+bob,o.z,o.on?1:0);
   }
-
-  // Collect animation decay
-  collectAnim *= 0.92;
-
-  // ── Render ──
-  const t = now / 1000;
-
-  gl.uniform2f(U.uRes, canvas.width, canvas.height);
-  gl.uniform1f(U.uTime, t);
-  gl.uniform3f(U.uCamPos, px, py, pz);
-  gl.uniform2f(U.uCamRot, yaw, pitch);
-  gl.uniform1f(U.uCollectAnim, collectAnim);
-
-  // Upload orb positions
-  for (let i = 0; i < 5; i++) {
-    const o = orbs[i];
-    // Orbs bob up and down gently
-    const bobY = o.active ? Math.sin(t * 1.5 + i * 2.0) * 0.15 : 0;
-    gl.uniform4f(uOrbs[i], o.x, o.y + bobY, o.z, o.active ? 1.0 : 0.0);
-  }
-
-  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
   requestAnimationFrame(frame);
 }
-
 requestAnimationFrame(frame);
-
 })();
