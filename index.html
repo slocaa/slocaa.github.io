@@ -54,6 +54,12 @@
       display:inline-block;padding:2px 8px;border:1px solid rgba(255,255,255,.2);
       border-radius:4px;font-size:12px;color:rgba(255,255,255,.5);margin:0 2px;
     }
+    #start-btn{
+      margin-top:16px;padding:14px 48px;font-size:16px;letter-spacing:3px;
+      background:rgba(255,255,255,.08);color:#fff;border:1px solid rgba(255,255,255,.15);
+      border-radius:12px;cursor:pointer;transition:all .2s;pointer-events:auto;
+    }
+    #start-btn:hover{background:rgba(255,255,255,.15);transform:scale(1.05)}
 
     #collect-flash{
       position:fixed;inset:0;z-index:15;pointer-events:none;
@@ -84,7 +90,7 @@
       <span class="key">Mouse</span> look ·
       <span class="key">Click</span> collect
     </p>
-    <p style="margin-top:12px;color:rgba(255,255,255,.25)">click anywhere to start</p>
+    <button id="start-btn">▶ START</button>
   </div>
 
   <script src="main.js"></script>

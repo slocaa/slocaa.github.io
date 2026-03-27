@@ -283,33 +283,51 @@ const keys = {};
 window.addEventListener("keydown", e => keys[e.code] = true);
 window.addEventListener("keyup", e => keys[e.code] = false);
 
-// Mouse look
+// Mouse look — works with pointer lock OR without
+let hasPointerLock = false;
+
 window.addEventListener("mousemove", e => {
   if (!started) return;
-  if (document.pointerLockElement !== canvas) return;
-  yaw += e.movementX * 0.002;
-  pitch -= e.movementY * 0.002;
+  if (hasPointerLock) {
+    yaw += e.movementX * 0.002;
+    pitch -= e.movementY * 0.002;
+  } else {
+    // Fallback: mouse position relative to center of screen
+    yaw += e.movementX * 0.002;
+    pitch -= e.movementY * 0.002;
+  }
   pitch = Math.max(-1.4, Math.min(1.4, pitch));
 });
 
 // Click to collect
 canvas.addEventListener("click", () => {
   if (!started) return;
+  // Re-request pointer lock if lost
+  if (!hasPointerLock) {
+    canvas.requestPointerLock().catch(() => {});
+  }
   tryCollect();
 });
 
-// Pointer lock
+// Start button
 const startScreen = document.getElementById("start-screen");
-startScreen.addEventListener("click", () => {
-  canvas.requestPointerLock();
+document.getElementById("start-btn").addEventListener("click", (e) => {
+  e.stopPropagation();
+  startGame();
 });
 
+function startGame() {
+  if (started) return;
+  // Try pointer lock, but start regardless
+  const lockPromise = canvas.requestPointerLock();
+  if (lockPromise && lockPromise.catch) lockPromise.catch(() => {});
+  started = true;
+  timerStart = performance.now();
+  startScreen.classList.add("hidden");
+}
+
 document.addEventListener("pointerlockchange", () => {
-  if (document.pointerLockElement === canvas && !started) {
-    started = true;
-    timerStart = performance.now();
-    startScreen.classList.add("hidden");
-  }
+  hasPointerLock = document.pointerLockElement === canvas;
 });
 
 // ── Collect orb if looking at one ──
