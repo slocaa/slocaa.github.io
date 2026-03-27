@@ -268,7 +268,7 @@ document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === canvas;
 });
 
-document.getElementById('go').addEventListener('click', () => {
+document.getElementById('S').addEventListener('click', () => {
   canvas.requestPointerLock();
   started = true;
   tStart = performance.now();
@@ -305,7 +305,7 @@ canvas.addEventListener('click', () => {
       h.textContent = '✓ Round ' + round + ' cleared!';
       h.style.color = 'rgba(100,255,150,.95)';
       h.style.opacity = '1';
-      document.getElementById('sbox').textContent = 'Round ' + round + ' cleared!';
+      document.getElementById('sbox').textContent = round;
 
       setTimeout(() => {
         h.style.opacity = '0';
@@ -313,7 +313,7 @@ canvas.addEventListener('click', () => {
         won = false;
         spawnOrbs();
         tStart = performance.now();
-        document.getElementById('sbox').textContent = 'Round ' + round + ' — Find the GOLD orb';
+        document.getElementById('sbox').textContent = round;
       }, 2200);
     } else {
       // Wrong
