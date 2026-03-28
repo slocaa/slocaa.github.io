@@ -1,351 +1,712 @@
-import * as THREE from 'three';
-import { Reflector } from 'three/addons/objects/Reflector.js';
+import { MAPS, pathLength, posOnPath } from './maps.js';
+import { TOWER_TYPES, getTowerStats, getUpgradeCost } from './towers.js';
+import { ENEMY_TYPES, generateWaves } from './enemies.js';
+import { drawMap, drawTower, drawEnemy, drawProjectile, drawEffect } from './render.js';
 
-// ═══ RENDERER ═══
-const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-renderer.setSize(innerWidth, innerHeight);
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 0.9;
-document.body.appendChild(renderer.domElement);
-const canvas = renderer.domElement;
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const W = 960, H = 640;
+canvas.width = W;
+canvas.height = H;
 
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x010103);
-scene.fog = new THREE.FogExp2(0x010103, 0.015);
+// ═══ GAME STATE ═══
+let state = 'menu'; // menu, playing, gameover, victory
+let currentMap = null;
+let mapIndex = 0;
+let money = 0;
+let lives = 0;
+let wave = 0;
+let waveActive = false;
+let waveTimer = 0;
+let spawnQueue = [];
+let enemies = [];
+let towers = [];
+let projectiles = [];
+let effects = [];
+let selectedTower = null;
+let placingType = null;
+let mouseX = 0, mouseY = 0;
+let waves = [];
+let totalPathLen = 0;
+let gameSpeed = 1;
+let score = 0;
 
-const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 300);
-camera.position.set(0, 1.65, 0);
+// ═══ MENU ═══
+function drawMenu() {
+  ctx.fillStyle = '#1a1a2e';
+  ctx.fillRect(0, 0, W, H);
 
-// ═══ ROOM CONFIG ═══
-const CELL = 12;
-const CEIL_H = 5.0;
-const GRID = 7;       // 7x7 = 49 rooms (way less than 121)
-const HALF = Math.floor(GRID / 2);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 36px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('TOWER DEFENSE', W/2, 100);
 
-// ═══ SHARED MATERIALS (reuse, don't recreate) ═══
-const wallMat = new THREE.MeshStandardMaterial({
-  color: 0x999aaa,
-  metalness: 0.97,
-  roughness: 0.03
-});
+  ctx.font = '14px sans-serif';
+  ctx.fillStyle = 'rgba(255,255,255,0.4)';
+  ctx.fillText('Select a map to begin', W/2, 135);
 
-const ceilMat = new THREE.MeshStandardMaterial({
-  color: 0x0c0c10,
-  metalness: 0.5,
-  roughness: 0.3
-});
+  MAPS.forEach((map, i) => {
+    const x = 120 + i * 260;
+    const y = 180;
+    const w = 220, h = 280;
 
-// Light panels — subtle glow, NOT blinding
-const panelMat = new THREE.MeshStandardMaterial({
-  color: 0xeee8dd,
-  emissive: 0xddd5c8,
-  emissiveIntensity: 0.6  // was 2.0 — way too much
-});
+    // Card
+    ctx.fillStyle = 'rgba(255,255,255,0.06)';
+    ctx.strokeStyle = mapIndex === i ? '#fff' : 'rgba(255,255,255,0.1)';
+    ctx.lineWidth = mapIndex === i ? 2 : 1;
+    roundRect(ctx, x, y, w, h, 12);
+    ctx.fill();
+    ctx.stroke();
 
-// ═══ SHARED GEOMETRY (create once, reuse) ═══
-const wallGeo = new THREE.PlaneGeometry(CELL, CEIL_H);
-const floorGeo = new THREE.PlaneGeometry(CELL, CELL);
-const ceilGeo = new THREE.PlaneGeometry(CELL, CELL);
-const panelGeo = new THREE.PlaneGeometry(0.8, 0.8);
+    // Map preview
+    ctx.fillStyle = map.groundColors[0];
+    roundRect(ctx, x + 10, y + 10, w - 20, 120, 8);
+    ctx.fill();
 
-// ═══ BUILD ROOMS ═══
-// Only ONE reflector for the floor directly under the player
-const reflectorFloor = new Reflector(new THREE.PlaneGeometry(CELL * GRID, CELL * GRID), {
-  clipBias: 0.003,
-  textureWidth: 512,
-  textureHeight: 512,
-  color: 0x080810
-});
-reflectorFloor.rotation.x = -Math.PI / 2;
-reflectorFloor.position.y = 0.001;
-scene.add(reflectorFloor);
-
-const rooms = [];
-
-for (let gx = -HALF; gx <= HALF; gx++) {
-  for (let gz = -HALF; gz <= HALF; gz++) {
-    const g = new THREE.Group();
-
-    // Regular floor (dark, under the reflector)
-    const floor = new THREE.Mesh(floorGeo, new THREE.MeshStandardMaterial({
-      color: 0x060608, metalness: 0.8, roughness: 0.1
-    }));
-    floor.rotation.x = -Math.PI / 2;
-    floor.position.y = -0.001;
-    g.add(floor);
-
-    // Ceiling
-    const ceil = new THREE.Mesh(ceilGeo, ceilMat);
-    ceil.rotation.x = Math.PI / 2;
-    ceil.position.y = CEIL_H;
-    g.add(ceil);
-
-    // 4 small light panels on ceiling
-    for (let lx = -1; lx <= 1; lx += 2) {
-      for (let lz = -1; lz <= 1; lz += 2) {
-        const p = new THREE.Mesh(panelGeo, panelMat);
-        p.rotation.x = Math.PI / 2;
-        p.position.set(lx * 2.8, CEIL_H - 0.01, lz * 2.8);
-        g.add(p);
-      }
+    // Mini path
+    ctx.save();
+    ctx.beginPath();
+    roundRect(ctx, x + 10, y + 10, w - 20, 120, 8);
+    ctx.clip();
+    ctx.strokeStyle = map.pathColor;
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    const sx = (w - 20) / W, sy = 120 / H;
+    ctx.moveTo(x + 10 + map.path[0][0] * sx, y + 10 + map.path[0][1] * sy);
+    for (let j = 1; j < map.path.length; j++) {
+      ctx.lineTo(x + 10 + map.path[j][0] * sx, y + 10 + map.path[j][1] * sy);
     }
+    ctx.stroke();
+    ctx.restore();
 
-    // 4 walls — shared material
-    const w1 = new THREE.Mesh(wallGeo, wallMat);
-    w1.position.set(CELL / 2, CEIL_H / 2, 0);
-    w1.rotation.y = -Math.PI / 2;
-    g.add(w1);
+    // Info
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 16px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(map.name, x + w/2, y + 155);
 
-    const w2 = new THREE.Mesh(wallGeo, wallMat);
-    w2.position.set(-CELL / 2, CEIL_H / 2, 0);
-    w2.rotation.y = Math.PI / 2;
-    g.add(w2);
+    ctx.font = '12px sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.fillText('Difficulty: ' + '★'.repeat(Math.ceil(map.difficulty * 2)), x + w/2, y + 178);
+    ctx.fillText('Lives: ' + map.lives, x + w/2, y + 198);
+    ctx.fillText('Start $' + map.startMoney, x + w/2, y + 218);
 
-    const w3 = new THREE.Mesh(wallGeo, wallMat);
-    w3.position.set(0, CEIL_H / 2, CELL / 2);
-    w3.rotation.y = Math.PI;
-    g.add(w3);
-
-    const w4 = new THREE.Mesh(wallGeo, wallMat);
-    w4.position.set(0, CEIL_H / 2, -CELL / 2);
-    g.add(w4);
-
-    g.position.set(gx * CELL, 0, gz * CELL);
-    scene.add(g);
-    rooms.push({ group: g, gx, gz });
-  }
+    // Play button
+    ctx.fillStyle = mapIndex === i ? '#4CAF50' : 'rgba(255,255,255,0.1)';
+    roundRect(ctx, x + 40, y + 235, w - 80, 32, 8);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 13px sans-serif';
+    ctx.fillText('PLAY', x + w/2, y + 255);
+  });
 }
 
-// ═══ LIGHTING — minimal, clean ═══
-scene.add(new THREE.AmbientLight(0x222233, 0.5));
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
 
-// Just 2 point lights that follow the player — no 25 rect area lights
-const pLight1 = new THREE.PointLight(0xffeedd, 4, 30, 1.5);
-scene.add(pLight1);
-const pLight2 = new THREE.PointLight(0xffeedd, 3, 25, 1.5);
-scene.add(pLight2);
+// ═══ START GAME ═══
+function startGame(mi) {
+  mapIndex = mi;
+  currentMap = MAPS[mi];
+  money = currentMap.startMoney;
+  lives = currentMap.lives;
+  wave = 0;
+  waveActive = false;
+  enemies = [];
+  towers = [];
+  projectiles = [];
+  effects = [];
+  selectedTower = null;
+  placingType = null;
+  spawnQueue = [];
+  waves = generateWaves(currentMap.difficulty);
+  totalPathLen = pathLength(currentMap.path);
+  state = 'playing';
+  score = 0;
+  gameSpeed = 1;
+}
 
-// ═══ ORBS — actual spheres, properly lit ═══
-const ORB_SPACING = 8;
-const ORB_GRID = 5;  // 5x5 = 25 orbs (less = faster)
-const ORB_HALF = Math.floor(ORB_GRID / 2);
-
-// High-poly sphere so it's actually round
-const orbGeo = new THREE.SphereGeometry(0.25, 64, 64);
-
-const orbGroup = new THREE.Group();
-scene.add(orbGroup);
-
-let orbList = [];
-let round = 1;
-let won = false;
-
-function spawnOrbs() {
-  // Clear old
-  for (const o of orbList) {
-    orbGroup.remove(o.mesh);
-    if (o.light) scene.remove(o.light);
-    o.mesh.geometry.dispose();
-    o.mesh.material.dispose();
+// ═══ SPAWN WAVE ═══
+function startWave() {
+  if (wave >= waves.length) { state = 'victory'; return; }
+  const w = waves[wave];
+  spawnQueue = [];
+  let delay = 0;
+  for (const group of w.groups) {
+    for (let i = 0; i < group.count; i++) {
+      spawnQueue.push({ type: group.type, time: delay, hpMult: w.hpMult });
+      delay += group.delay;
+    }
   }
-  orbList = [];
+  waveTimer = 0;
+  waveActive = true;
+}
 
-  const goldOX = Math.floor(Math.random() * ORB_GRID) - ORB_HALF;
-  const goldOZ = Math.floor(Math.random() * ORB_GRID) - ORB_HALF;
+function spawnEnemy(type, hpMult) {
+  const def = ENEMY_TYPES[type];
+  enemies.push({
+    type, x: 0, y: 0, dist: 0,
+    hp: def.hp * hpMult, maxHp: def.hp * hpMult,
+    speed: def.speed, baseSpeed: def.speed,
+    reward: def.reward, color: def.color, radius: def.radius,
+    shieldHp: def.shield ? def.shield * hpMult : 0,
+    regenRate: def.regen || 0,
+    slowTimer: 0, slowAmount: 0,
+    poisonTimer: 0, poisonDmg: 0,
+    alive: true
+  });
+}
 
-  let idx = 0;
-  for (let ox = -ORB_HALF; ox <= ORB_HALF; ox++) {
-    for (let oz = -ORB_HALF; oz <= ORB_HALF; oz++) {
-      const isGold = (ox === goldOX && oz === goldOZ);
+// ═══ TOWER PLACEMENT ═══
+function canPlace(x, y) {
+  // Not on path
+  for (let i = 1; i < currentMap.path.length; i++) {
+    const ax = currentMap.path[i-1][0], ay = currentMap.path[i-1][1];
+    const bx = currentMap.path[i][0], by = currentMap.path[i][1];
+    const dist = distToSegment(x, y, ax, ay, bx, by);
+    if (dist < 30) return false;
+  }
+  // Not on other towers
+  for (const t of towers) {
+    const dx = t.x - x, dy = t.y - y;
+    if (dx*dx + dy*dy < 30*30) return false;
+  }
+  // In bounds
+  if (x < 20 || x > W - 20 || y < 20 || y > H - 20) return false;
+  return true;
+}
 
-      let mat;
-      if (isGold) {
-        mat = new THREE.MeshStandardMaterial({
-          color: 0xffd700,
-          emissive: 0xcc8800,
-          emissiveIntensity: 0.4,
-          metalness: 0.9,
-          roughness: 0.08
-        });
-      } else {
-        const hue = (idx * 0.137 + 0.05) % 1.0;
-        const c = new THREE.Color().setHSL(hue, 0.5, 0.4);
-        mat = new THREE.MeshStandardMaterial({
-          color: c,
-          emissive: c,
-          emissiveIntensity: 0.15,
-          metalness: 0.7,
-          roughness: 0.12
-        });
-      }
+function distToSegment(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay;
+  const len2 = dx*dx + dy*dy;
+  let t = Math.max(0, Math.min(1, ((px-ax)*dx + (py-ay)*dy) / len2));
+  const cx = ax + t*dx, cy = ay + t*dy;
+  return Math.sqrt((px-cx)*(px-cx) + (py-cy)*(py-cy));
+}
 
-      const mesh = new THREE.Mesh(orbGeo.clone(), mat);
-      const wx = camera.position.x + ox * ORB_SPACING;
-      const wz = camera.position.z + oz * ORB_SPACING;
-      const wy = 1.2 + Math.abs(Math.sin(ox * 2.1 + oz * 1.7)) * 1.5;
+function placeTower(typeId, x, y) {
+  const stats = getTowerStats(typeId, 0);
+  if (money < stats.cost) return false;
+  if (!canPlace(x, y)) return false;
+  money -= stats.cost;
+  towers.push({ typeId, x, y, level: 0, cooldown: 0 });
+  effects.push({ type:'text', x, y: y-20, text:'Placed!', color:'#4CAF50', alpha:1 });
+  return true;
+}
 
-      mesh.position.set(wx, wy, wz);
-      orbGroup.add(mesh);
+// ═══ COMBAT LOGIC ═══
+function updateTowers(dt) {
+  for (const tower of towers) {
+    const stats = getTowerStats(tower.typeId, tower.level);
+    tower.cooldown -= dt;
+    if (tower.cooldown > 0) continue;
 
-      // Only gold orb gets a light — saves tons of GPU
-      let light = null;
-      if (isGold) {
-        light = new THREE.PointLight(0xffd700, 1.5, 8, 2);
-        light.position.copy(mesh.position);
-        scene.add(light);
-      }
+    // Find target(s)
+    let targets = enemies.filter(e => {
+      if (!e.alive) return false;
+      const dx = e.x - tower.x, dy = e.y - tower.y;
+      return dx*dx + dy*dy <= stats.range * stats.range;
+    }).sort((a, b) => b.dist - a.dist); // prioritize furthest along path
 
-      orbList.push({
-        mesh, light, isGold,
-        baseX: wx, baseY: wy, baseZ: wz,
-        phase: Math.random() * Math.PI * 2
+    if (targets.length === 0) continue;
+
+    tower.cooldown = 1 / stats.fireRate;
+
+    // How many targets to hit
+    let hitCount = 1;
+    if (stats.special === 'multishot') hitCount = 2;
+    if (stats.special === 'chain') hitCount = stats.chainCount || 3;
+
+    for (let i = 0; i < Math.min(hitCount, targets.length); i++) {
+      const target = targets[i];
+      projectiles.push({
+        x: tower.x, y: tower.y,
+        tx: target.x, ty: target.y,
+        target: target,
+        speed: 300,
+        damage: stats.damage,
+        color: stats.type.color,
+        special: stats.special,
+        splashRadius: stats.splashRadius || 0,
+        slowAmount: stats.slowAmount || 0,
+        slowDuration: stats.slowDuration || 0,
+        poisonDmg: stats.poisonDmg || 0,
+        poisonDur: stats.poisonDur || 0
       });
-      idx++;
     }
   }
 }
 
-spawnOrbs();
+function updateProjectiles(dt) {
+  for (let i = projectiles.length - 1; i >= 0; i--) {
+    const p = projectiles[i];
+    // Move toward target
+    if (p.target && p.target.alive) {
+      p.tx = p.target.x;
+      p.ty = p.target.y;
+    }
+    const dx = p.tx - p.x, dy = p.ty - p.y;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    if (dist < 8) {
+      // Hit!
+      applyHit(p);
+      projectiles.splice(i, 1);
+      continue;
+    }
+    const spd = p.speed * dt;
+    p.x += (dx/dist) * spd;
+    p.y += (dy/dist) * spd;
 
-// ═══ PLAYER ═══
-let yaw = 0, pitch = 0;
-const keys = {};
-let started = false, tStart = 0;
+    // Remove if off screen
+    if (p.x < -50 || p.x > W+50 || p.y < -50 || p.y > H+50) {
+      projectiles.splice(i, 1);
+    }
+  }
+}
 
-window.addEventListener('keydown', e => { keys[e.code] = true; });
-window.addEventListener('keyup', e => { keys[e.code] = false; });
+function applyHit(proj) {
+  effects.push({ type:'hit', x:proj.tx, y:proj.ty, color:proj.color, alpha:1 });
 
-let locked = false;
-window.addEventListener('mousemove', e => {
-  if (!started || !locked) return;
-  yaw += e.movementX * 0.0018;
-  pitch -= e.movementY * 0.0018;
-  pitch = Math.max(-1.4, Math.min(1.4, pitch));
+  if (proj.special === 'splash' || proj.special === 'explosive') {
+    // AoE damage
+    const r = proj.splashRadius || 40;
+    effects.push({ type:'explosion', x:proj.tx, y:proj.ty, radius:r, color:proj.color, alpha:1 });
+    for (const e of enemies) {
+      if (!e.alive) continue;
+      const dx = e.x - proj.tx, dy = e.y - proj.ty;
+      if (dx*dx + dy*dy <= r*r) {
+        damageEnemy(e, proj.damage * 0.6);
+      }
+    }
+  }
+
+  if (proj.target && proj.target.alive) {
+    damageEnemy(proj.target, proj.damage);
+
+    // Slow
+    if (proj.special === 'slow' || proj.special === 'freeze') {
+      proj.target.slowTimer = proj.slowDuration;
+      proj.target.slowAmount = proj.slowAmount;
+      if (proj.special === 'freeze') {
+        proj.target.slowTimer = 0.8; // brief full stop
+        proj.target.slowAmount = 1.0;
+      }
+    }
+
+    // Poison
+    if (proj.special === 'poison' || proj.special === 'chain') {
+      proj.target.poisonTimer = proj.poisonDur;
+      proj.target.poisonDmg = proj.poisonDmg;
+    }
+  }
+}
+
+function damageEnemy(enemy, dmg) {
+  if (enemy.shieldHp > 0) {
+    const absorbed = Math.min(enemy.shieldHp, dmg);
+    enemy.shieldHp -= absorbed;
+    dmg -= absorbed;
+  }
+  enemy.hp -= dmg;
+  if (enemy.hp <= 0) {
+    enemy.alive = false;
+    money += enemy.reward;
+    score += enemy.reward;
+    effects.push({ type:'text', x:enemy.x, y:enemy.y-10, text:'+$'+enemy.reward, color:'#ffd700', alpha:1 });
+  }
+}
+
+// ═══ UPDATE ═══
+function update(dt) {
+  dt *= gameSpeed;
+
+  // Spawn queue
+  if (waveActive && spawnQueue.length > 0) {
+    waveTimer += dt;
+    while (spawnQueue.length > 0 && spawnQueue[0].time <= waveTimer) {
+      const s = spawnQueue.shift();
+      spawnEnemy(s.type, s.hpMult);
+    }
+  }
+
+  // Check wave complete
+  if (waveActive && spawnQueue.length === 0 && enemies.every(e => !e.alive)) {
+    waveActive = false;
+    wave++;
+    if (wave >= waves.length) state = 'victory';
+  }
+
+  // Move enemies
+  for (const e of enemies) {
+    if (!e.alive) continue;
+
+    // Slow
+    let speedMult = 1;
+    if (e.slowTimer > 0) {
+      speedMult = 1 - e.slowAmount;
+      e.slowTimer -= dt;
+    }
+
+    // Poison
+    if (e.poisonTimer > 0) {
+      e.hp -= e.poisonDmg * dt;
+      e.poisonTimer -= dt;
+      if (e.hp <= 0) {
+        e.alive = false;
+        money += e.reward;
+        score += e.reward;
+        effects.push({ type:'text', x:e.x, y:e.y-10, text:'+$'+e.reward, color:'#9C27B0', alpha:1 });
+      }
+    }
+
+    // Regen
+    if (e.regenRate > 0 && e.hp < e.maxHp) {
+      e.hp = Math.min(e.maxHp, e.hp + e.regenRate * dt);
+    }
+
+    e.dist += e.baseSpeed * speedMult * dt;
+    const pos = posOnPath(currentMap.path, e.dist);
+    e.x = pos.x;
+    e.y = pos.y;
+
+    // Reached end
+    if (e.dist >= totalPathLen) {
+      e.alive = false;
+      lives--;
+      effects.push({ type:'text', x:e.x, y:e.y, text:'-1 ❤️', color:'#F44336', alpha:1 });
+      if (lives <= 0) state = 'gameover';
+    }
+  }
+
+  // Clean dead enemies
+  enemies = enemies.filter(e => e.alive || e.hp > 0);
+
+  updateTowers(dt);
+  updateProjectiles(dt);
+
+  // Effects
+  for (let i = effects.length - 1; i >= 0; i--) {
+    effects[i].alpha -= dt * 1.5;
+    if (effects[i].alpha <= 0) effects.splice(i, 1);
+  }
+}
+
+// ═══ DRAW HUD ═══
+function drawHUD() {
+  // Top bar
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.fillRect(0, 0, W, 36);
+
+  ctx.font = 'bold 14px sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#ffd700';
+  ctx.fillText('$' + money, 12, 24);
+
+  ctx.fillStyle = '#F44336';
+  ctx.fillText('❤️ ' + lives, 110, 24);
+
+  ctx.fillStyle = '#fff';
+  ctx.fillText('Wave ' + (wave + 1) + '/' + waves.length, 200, 24);
+
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  ctx.fillText('Score: ' + score, 340, 24);
+
+  // Speed button
+  ctx.fillStyle = gameSpeed === 2 ? '#FF9800' : 'rgba(255,255,255,0.15)';
+  roundRect(ctx, W - 80, 6, 30, 24, 4);
+  ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.font = '11px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(gameSpeed + 'x', W - 65, 22);
+
+  // Next wave button (if not active)
+  if (!waveActive && state === 'playing') {
+    ctx.fillStyle = '#4CAF50';
+    roundRect(ctx, W - 160, 6, 70, 24, 4);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 11px sans-serif';
+    ctx.fillText('NEXT WAVE', W - 125, 22);
+  }
+
+  // Tower shop — bottom bar
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.fillRect(0, H - 60, W, 60);
+
+  TOWER_TYPES.forEach((t, i) => {
+    const x = 20 + i * 100;
+    const y = H - 50;
+    const stats = t.levels[0];
+    const canAfford = money >= stats.cost;
+
+    ctx.fillStyle = placingType === t.id ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.05)';
+    ctx.strokeStyle = canAfford ? t.color : 'rgba(255,255,255,0.1)';
+    ctx.lineWidth = placingType === t.id ? 2 : 1;
+    roundRect(ctx, x, y, 90, 44, 6);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.font = '16px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(t.icon, x + 6, y + 20);
+
+    ctx.font = '11px sans-serif';
+    ctx.fillStyle = canAfford ? '#fff' : 'rgba(255,255,255,0.3)';
+    ctx.fillText(t.name, x + 26, y + 17);
+
+    ctx.fillStyle = canAfford ? '#ffd700' : 'rgba(255,255,255,0.2)';
+    ctx.font = '10px sans-serif';
+    ctx.fillText('$' + stats.cost, x + 26, y + 32);
+  });
+
+  // Selected tower info
+  if (selectedTower !== null) {
+    const t = towers[selectedTower];
+    const stats = getTowerStats(t.typeId, t.level);
+    const upgCost = getUpgradeCost(t.typeId, t.level);
+
+    ctx.fillStyle = 'rgba(0,0,0,0.75)';
+    roundRect(ctx, W - 200, 50, 190, upgCost ? 130 : 100, 8);
+    ctx.fill();
+
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 13px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(stats.type.icon + ' ' + stats.type.name + ' Lv.' + (t.level + 1), W - 188, 72);
+
+    ctx.font = '11px sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.fillText('DMG: ' + stats.damage + '  RNG: ' + stats.range, W - 188, 92);
+    ctx.fillText('SPD: ' + stats.fireRate.toFixed(1) + '/s', W - 188, 108);
+    if (stats.special) ctx.fillText('Special: ' + stats.special, W - 188, 124);
+
+    if (upgCost) {
+      ctx.fillStyle = money >= upgCost ? '#4CAF50' : 'rgba(255,255,255,0.15)';
+      roundRect(ctx, W - 188, 135, 80, 24, 4);
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 10px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('UPGRADE $' + upgCost, W - 148, 151);
+
+      ctx.fillStyle = '#F44336';
+      roundRect(ctx, W - 98, 135, 50, 24, 4);
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.fillText('SELL', W - 73, 151);
+    }
+  }
+
+  // Placement preview
+  if (placingType) {
+    const stats = getTowerStats(placingType, 0);
+    const ok = canPlace(mouseX, mouseY) && mouseY > 36 && mouseY < H - 60;
+    ctx.globalAlpha = 0.5;
+    ctx.strokeStyle = ok ? '#4CAF50' : '#F44336';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(mouseX, mouseY, stats.range, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = ok ? stats.type.color : '#F44336';
+    ctx.beginPath();
+    ctx.arc(mouseX, mouseY, 14, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+}
+
+// ═══ DRAW ═══
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+
+  if (state === 'menu') { drawMenu(); return; }
+
+  drawMap(ctx, currentMap, W, H);
+
+  // Towers
+  towers.forEach((t, i) => {
+    const stats = getTowerStats(t.typeId, t.level);
+    drawTower(ctx, t, stats, selectedTower === i);
+  });
+
+  // Enemies
+  const t = performance.now() / 1000;
+  for (const e of enemies) {
+    if (e.alive) drawEnemy(ctx, e, t);
+  }
+
+  // Projectiles
+  for (const p of projectiles) drawProjectile(ctx, p);
+
+  // Effects
+  for (const fx of effects) drawEffect(ctx, fx);
+
+  drawHUD();
+
+  // Game over / victory overlay
+  if (state === 'gameover' || state === 'victory') {
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 32px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(state === 'victory' ? 'VICTORY!' : 'GAME OVER', W/2, H/2 - 30);
+    ctx.font = '16px sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.fillText('Score: ' + score + '  Waves: ' + wave + '/' + waves.length, W/2, H/2 + 10);
+    ctx.fillStyle = '#4CAF50';
+    roundRect(ctx, W/2 - 60, H/2 + 30, 120, 36, 8);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillText('MENU', W/2, H/2 + 53);
+  }
+}
+
+// ═══ INPUT ═══
+canvas.addEventListener('mousemove', e => {
+  const rect = canvas.getBoundingClientRect();
+  const sx = W / rect.width, sy = H / rect.height;
+  mouseX = (e.clientX - rect.left) * sx;
+  mouseY = (e.clientY - rect.top) * sy;
 });
 
-document.addEventListener('pointerlockchange', () => {
-  locked = document.pointerLockElement === canvas;
-});
+canvas.addEventListener('click', e => {
+  const rect = canvas.getBoundingClientRect();
+  const sx = W / rect.width, sy = H / rect.height;
+  const cx = (e.clientX - rect.left) * sx;
+  const cy = (e.clientY - rect.top) * sy;
 
-document.getElementById('S').addEventListener('click', () => {
-  started = true;
-  tStart = performance.now();
-  document.getElementById('S').classList.add('gone');
-  setTimeout(() => { try { canvas.requestPointerLock(); } catch (e) {} }, 100);
-});
+  if (state === 'menu') {
+    // Check map card clicks
+    MAPS.forEach((map, i) => {
+      const x = 120 + i * 260, y = 180;
+      if (cx >= x && cx <= x + 220 && cy >= y + 235 && cy <= y + 267) {
+        startGame(i);
+      }
+      if (cx >= x && cx <= x + 220 && cy >= y && cy <= y + 280) {
+        mapIndex = i;
+      }
+    });
+    return;
+  }
 
-// Raycaster
-const raycaster = new THREE.Raycaster();
-raycaster.far = 20;
+  if (state === 'gameover' || state === 'victory') {
+    if (cx > W/2 - 60 && cx < W/2 + 60 && cy > H/2 + 30 && cy < H/2 + 66) {
+      state = 'menu';
+    }
+    return;
+  }
 
-canvas.addEventListener('click', () => {
-  if (!started) return;
-  if (!locked) { try { canvas.requestPointerLock(); } catch (e) {} return; }
-  if (won) return;
+  // Speed toggle
+  if (cx > W - 80 && cx < W - 50 && cy < 30) {
+    gameSpeed = gameSpeed === 1 ? 2 : 1;
+    return;
+  }
 
-  raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
-  const hits = raycaster.intersectObjects(orbGroup.children);
+  // Next wave button
+  if (!waveActive && cx > W - 160 && cx < W - 90 && cy < 30) {
+    startWave();
+    return;
+  }
 
-  if (hits.length > 0) {
-    const entry = orbList.find(o => o.mesh === hits[0].object);
-    if (!entry) return;
+  // Tower shop
+  if (cy > H - 60) {
+    TOWER_TYPES.forEach((t, i) => {
+      const x = 20 + i * 100;
+      if (cx >= x && cx <= x + 90 && cy >= H - 50) {
+        if (money >= t.levels[0].cost) {
+          placingType = placingType === t.id ? null : t.id;
+          selectedTower = null;
+        }
+      }
+    });
+    return;
+  }
 
-    if (entry.isGold) {
-      entry.mesh.visible = false;
-      if (entry.light) entry.light.intensity = 0;
-      won = true;
-      document.getElementById('flash').classList.add('on');
-      setTimeout(() => document.getElementById('flash').classList.remove('on'), 350);
-      const h = document.getElementById('hint');
-      h.textContent = '\u2713 Round ' + round;
-      h.style.color = 'rgba(100,255,150,.9)';
-      h.style.opacity = '1';
-      document.getElementById('sbox').textContent = round;
-      setTimeout(() => {
-        h.style.opacity = '0';
-        round++;
-        won = false;
-        spawnOrbs();
-        tStart = performance.now();
-        document.getElementById('sbox').textContent = round;
-      }, 2000);
-    } else {
-      entry.mesh.visible = false;
-      const h = document.getElementById('hint');
-      h.textContent = '\u2717 Wrong';
-      h.style.color = 'rgba(255,80,80,.9)';
-      h.style.opacity = '1';
-      setTimeout(() => { h.style.opacity = '0'; }, 900);
+  // Upgrade/sell buttons
+  if (selectedTower !== null) {
+    const t = towers[selectedTower];
+    const upgCost = getUpgradeCost(t.typeId, t.level);
+    if (upgCost && cx > W - 188 && cx < W - 108 && cy > 135 && cy < 159) {
+      if (money >= upgCost) {
+        money -= upgCost;
+        t.level++;
+        effects.push({ type:'text', x:t.x, y:t.y-20, text:'Upgraded!', color:'#4CAF50', alpha:1 });
+      }
+      return;
+    }
+    // Sell
+    if (cx > W - 98 && cx < W - 48 && cy > 135 && cy < 159) {
+      const stats = getTowerStats(t.typeId, t.level);
+      money += Math.floor(stats.cost * 0.6);
+      effects.push({ type:'text', x:t.x, y:t.y-20, text:'Sold!', color:'#F44336', alpha:1 });
+      towers.splice(selectedTower, 1);
+      selectedTower = null;
+      return;
+    }
+  }
+
+  // Place tower
+  if (placingType && cy > 36 && cy < H - 60) {
+    if (placeTower(placingType, cx, cy)) {
+      // Keep placing same type
+    }
+    return;
+  }
+
+  // Select tower
+  placingType = null;
+  selectedTower = null;
+  for (let i = 0; i < towers.length; i++) {
+    const dx = towers[i].x - cx, dy = towers[i].y - cy;
+    if (dx*dx + dy*dy < 20*20) {
+      selectedTower = i;
+      return;
     }
   }
 });
 
-// ═══ RESIZE ═══
-window.addEventListener('resize', () => {
-  camera.aspect = innerWidth / innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(innerWidth, innerHeight);
+// Right click to cancel
+canvas.addEventListener('contextmenu', e => {
+  e.preventDefault();
+  placingType = null;
+  selectedTower = null;
 });
 
-// ═══ INFINITE ROOM REPOSITIONING ═══
-function updateRooms() {
-  const pcx = Math.round(camera.position.x / CELL);
-  const pcz = Math.round(camera.position.z / CELL);
-  for (const r of rooms) {
-    r.group.position.x = (r.gx + pcx) * CELL;
-    r.group.position.z = (r.gz + pcz) * CELL;
-  }
-  // Move the single reflector floor to follow player
-  reflectorFloor.position.x = pcx * CELL;
-  reflectorFloor.position.z = pcz * CELL;
+// ═══ GAME LOOP ═══
+let lastTime = 0;
+function loop(now) {
+  const dt = Math.min((now - lastTime) / 1000, 0.05);
+  lastTime = now;
+
+  if (state === 'playing') update(dt);
+  draw();
+  requestAnimationFrame(loop);
 }
 
-// ═══ LOOP ═══
-const clock = new THREE.Clock();
-
-function animate() {
-  requestAnimationFrame(animate);
-  const dt = Math.min(clock.getDelta(), 0.05);
-  const t = clock.getElapsedTime();
-
-  if (started && !won) {
-    const sp = 5.0 * dt;
-    const fx = Math.sin(yaw), fz = -Math.cos(yaw);
-    const rx = Math.cos(yaw), rz = Math.sin(yaw);
-    if (keys.KeyW) { camera.position.x += fx * sp; camera.position.z += fz * sp; }
-    if (keys.KeyS) { camera.position.x -= fx * sp; camera.position.z -= fz * sp; }
-    if (keys.KeyA) { camera.position.x -= rx * sp; camera.position.z -= rz * sp; }
-    if (keys.KeyD) { camera.position.x += rx * sp; camera.position.z += rz * sp; }
-    const el = (performance.now() - tStart) / 1000;
-    const mn = Math.floor(el / 60), sc = Math.floor(el % 60);
-    document.getElementById('tbox').textContent = mn + ':' + (sc < 10 ? '0' : '') + sc;
-  }
-
-  camera.rotation.order = 'YXZ';
-  camera.rotation.y = -yaw;
-  camera.rotation.x = pitch;
-
-  // Lights follow player
-  pLight1.position.set(camera.position.x, CEIL_H - 0.2, camera.position.z);
-  pLight2.position.set(camera.position.x, 1.5, camera.position.z + 5);
-
-  updateRooms();
-
-  // Animate orbs
-  for (const o of orbList) {
-    if (!o.mesh.visible) continue;
-    o.mesh.position.y = o.baseY + Math.sin(t * 1.2 + o.phase) * 0.12;
-    o.mesh.rotation.y = t * 0.3 + o.phase;
-    if (o.light) o.light.position.copy(o.mesh.position);
-    if (o.isGold) {
-      o.mesh.material.emissiveIntensity = 0.3 + 0.15 * Math.sin(t * 2.5);
-      if (o.light) o.light.intensity = 1.2 + Math.sin(t * 2.5) * 0.5;
-    }
-  }
-
-  // Direct render — no bloom pass (was causing the blowout)
-  renderer.render(scene, camera);
+// Scale canvas to fit window
+function resize() {
+  const aspect = W / H;
+  let cw = innerWidth, ch = innerHeight;
+  if (cw / ch > aspect) cw = ch * aspect;
+  else ch = cw / aspect;
+  canvas.style.width = cw + 'px';
+  canvas.style.height = ch + 'px';
 }
+window.addEventListener('resize', resize);
+resize();
 
-animate();
+requestAnimationFrame(loop);

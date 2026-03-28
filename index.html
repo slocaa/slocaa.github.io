@@ -3,32 +3,17 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>∞ Mirror Room</title>
+  <title>Tower Defense</title>
   <style>
-    *{margin:0;padding:0}
-    body{background:#000;overflow:hidden;font-family:system-ui,sans-serif}
-    canvas{display:block}
-    #hud{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);pointer-events:none;z-index:10;font-size:11px;color:rgba(255,255,255,.2);letter-spacing:1px}
-    #cross{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:11;pointer-events:none;width:6px;height:6px;border-radius:50%;background:rgba(255,255,255,.25)}
-    #hint{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:12;pointer-events:none;font-size:16px;opacity:0;transition:opacity .3s;text-shadow:0 0 20px currentColor}
-    #flash{position:fixed;inset:0;z-index:9;pointer-events:none;background:radial-gradient(circle,rgba(255,215,0,.15),transparent 60%);opacity:0;transition:opacity .15s}
-    #flash.on{opacity:1}
-    #S{position:fixed;inset:0;z-index:20;background:rgba(0,0,0,.95);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:24px;transition:opacity .8s;cursor:pointer}
-    #S.gone{opacity:0;pointer-events:none}
-    #S h1{font-size:14px;font-weight:300;color:rgba(255,255,255,.5);letter-spacing:8px;text-transform:uppercase}
-    #S p{font-size:11px;color:rgba(255,255,255,.15);letter-spacing:1px}
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{background:#1a1a2e;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:'Segoe UI',system-ui,sans-serif;overflow:hidden}
+    canvas{border-radius:8px;box-shadow:0 0 40px rgba(0,0,0,.5);cursor:crosshair}
+    #ui{position:fixed;top:0;left:0;right:0;bottom:0;pointer-events:none;z-index:10}
   </style>
 </head>
 <body>
-  <div id="cross"></div>
-  <div id="hint"></div>
-  <div id="flash"></div>
-  <div id="hud"><span id="sbox"></span> <span id="tbox"></span></div>
-  <div id="S">
-    <h1>mirror room</h1>
-    <p>find the gold orb · click to enter</p>
-  </div>
-  <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.163.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.163.0/examples/jsm/"}}</script>
+  <canvas id="c"></canvas>
+  <div id="ui"></div>
   <script type="module" src="game.js"></script>
 </body>
 </html>
