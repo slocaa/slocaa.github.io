@@ -269,10 +269,12 @@ document.addEventListener('pointerlockchange', () => {
 });
 
 document.getElementById('S').addEventListener('click', () => {
-  canvas.requestPointerLock();
   started = true;
   tStart = performance.now();
   document.getElementById('S').classList.add('gone');
+  setTimeout(() => {
+    try { canvas.requestPointerLock(); } catch (e) {}
+  }, 100);
 });
 
 // Raycaster for clicking orbs
